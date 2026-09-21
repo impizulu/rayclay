@@ -1,271 +1,514 @@
 /*
-================================================================================
-    gallery_app.c - the gallery app's pure-RC_ GUI + bench hooks
-================================================================================
+    gallery_app.c - the photo gallery's UI.
 
-    The single implementation TU. It defines the four-function app contract
-    (seed / update / layout / bench_step) + a demo-only chrome overlay, and it
-    carries the header-only backend implementation (GALLERY_BACKEND_IMPLEMENTATION).
+    A clipped-scroll thumbnail wall in dated sections, with a search box, a tag
+    filter and a tile-size control above it, beside a detail pane carrying the
+    photograph, its metadata, an editable caption and a details modal. The twelve
+    photographs are generated in memory and decoded through rcLoadImageFromMemory,
+    so there are no asset files to ship. Side by side where both panes fit; one
+    pane at a time below that, with a way back.
 
-    PURE RC_ API - RayClay types only, no layout-engine call, no <system>
-    include (any raw-memory / string need is routed through gallery_backend.h). The
-    FROZEN core (seed/update/layout, incl. the modal) calls ZERO rcFormat: every
-    dynamic string is a backend fixed buffer (dim "96 x 72", the result count) or a
-    stable literal, and element ids come from a static table - so the arena-less
-    bench core never dereferences a NULL arena. rcFormat is used ONLY in
-    gallery_demo_chrome (guarded by ctx->arena).
+    Pure RC_ API - no system includes, and the UI formats no strings.
 
-    IMAGES: the 12 "photos" are procedurally generated as valid 32-bit BMPs by the
-    backend and decoded ONCE per process through the PUBLIC rcLoadImageFromMemory -
-    exercising the real stb_image decode + GPU upload (the gallery's B9 cost centre).
-    Decoded handles live in a process-global cache (g_images) so a re-seed re-copies
-    rather than re-decodes: the capture backend's image-handle pool is a 16-slot
-    one-way static, so re-decoding would drain it. Every draw path degrades to a
-    placeholder if a handle is NULL (the library does not auto-substitute one).
-
-    Build target: rayclay_bench_gallery
-================================================================================
+    Build: cmake --build build --target rayclay_bench_gallery
 */
 #define GALLERY_BACKEND_IMPLEMENTATION
 #include "gallery_app.h"
 
-/* The frozen bench scenario length: warmup frames, then HOLD. Retune this and the
-   click coordinates to your own measurement budget and layout. */
+#include "icons/rc_icons_panel_left.h"   /* the one-pane arm's back control */
+#include "icons/rc_icons_plus.h"          /* the tile-size control */
+#include "icons/rc_icons_minus.h"
+
+/* The scripted scenario's length: warmup frames, then a strict hold. */
 #define GALLERY_BENCH_WARMUP 80
 
-/* The image the bench selects + freezes on (a captioned landscape). SEEDED as the
-   default selection (like notes' default-open note) so the frozen scene is
-   click-coordinate-independent - robust to grid reflow. */
+/* The photo the scenario opens on, SEEDED rather than clicked for. */
 #define GALLERY_BENCH_PICK 4
 
-/* Layout constants (px). The grid column count is derived from the live viewport
-   width so the grid reflows; the bench viewport is fixed (1280x720) => deterministic. */
+/* Layout constants, px. */
 #define GAL_DETAIL_W  380
-#define GAL_THUMB_W   190
-#define GAL_THUMB_H   132
-#define GAL_CELL_W    (GAL_THUMB_W + 12)
-#define GAL_GRID_GAP  14
+#define GAL_GRID_GAP  4                   /* mortar between tiles, NOT a margin       */
+#define GAL_SECT_PAD  14                  /* the date header's own side gutter        */
 
-/* The caption text the bench types into the selected photo's rcTextArea (ASCII). It is
-   APPENDED to the seeded caption, making it long enough to SOFT-WRAP across rows - the
-   per-line measure cost the text area adds. A genuine newline inserts only via the Enter
-   KEY channel (in->key with an ENTER semantic), NOT via in->text: rc_textedit's char
-   filter drops control bytes incl. '\n' - so add an Enter press to reach the
-   multiline-EDIT (hard newline) determinism case. */
-static const char GAL__TYPED[] = " Shot at dawn, in soft golden light.";
+/* THE TILE-SIZE CONTROL, the width each step aims a tile at. The column count is
+   the width the grid is given divided by this, so one step reflows the wall. */
+#define GAL_ZOOM_STEPS 3
+#define GAL_TILE_W     220                /* the middle step, and the breakpoint's basis */
+static const int GAL_TILE_WIDTHS[GAL_ZOOM_STEPS] = { 320, 220, 156 };
 
-/* Stable ids for the thumbnail cells (the layout engine needs a stable id per interactive element;
-   an rcFormat id is impossible in the arena-less frozen core, so a static table). */
+static int gal_tile_width(int zoomStep) {
+    if (zoomStep < 0) zoomStep = 0;
+    if (zoomStep >= GAL_ZOOM_STEPS) zoomStep = GAL_ZOOM_STEPS - 1;
+    return GAL_TILE_WIDTHS[zoomStep];
+}
+
+/* The wall's right gutter. rcScrollbar is an OVERLAY - an 8 px bar inset 3 px -
+   so it paints over whatever the tiles put there; reserving those 11 px as the
+   container's own padding stops the tiles where the bar begins. */
+#define GAL_SCROLLBAR_GUTTER 12
+
+/* THE ONE BREAKPOINT, DERIVED FROM THIS APP'S OWN PANES rather than from a table
+   of device widths: the detail column plus the two tiles that make the wall a grid
+   rather than a list. Below it the two panes take turns. It is measured against
+   the width the Body row is given, so a desktop window dragged narrow takes the
+   same arm a phone does - which is the only reason it is testable without one. */
+#define GAL_ONE_PANE_W  (GAL_DETAIL_W + 2 * GAL_TILE_W + GAL_GRID_GAP)
+
+/* The toolbar band, under the 52 px titlebar. The one-pane arm grows a second
+   line for the filter and the count, so the search box can have the first line to
+   itself - sharing one narrow line, it was too small to type in. */
+#define GAL_TOOLBAR_H    56
+#define GAL_COUNT_ROW_H  40
+
+/* The detail pane is two parts and only one has a fixed height: the text column,
+   summed from what it declares (18 pad + 30 title + 12 + 18 meta + 12 + 12 label
+   + 12 + 60 text area + 12 + 12 + 28 button + 18 pad + 1 rule). THE PHOTOGRAPH
+   TAKES EVERY PIXEL THAT LEAVES, because a viewer that stops the picture at a
+   fixed height and leaves an empty band under it is showing its layout. The two
+   summed are the height below which the pane scrolls instead. */
+#define GAL_CHROME_H      (52 + GAL_TOOLBAR_H)
+#define GAL_BACK_ROW_H    44
+#define GAL_PREVIEW_MIN   230
+#define GAL_DETAIL_TEXT_H 245
+#define GAL_DETAIL_H      (GAL_PREVIEW_MIN + GAL_DETAIL_TEXT_H)
+
+/* The caption line the scenario types into the rcTextArea. Its LENGTH is the
+   point: long enough to soft-wrap to a second row. A newline arrives only through
+   the key channel with an ENTER semantic - the text channel drops control bytes. */
+static const char GAL__TYPED[] = " Shot at dawn, in soft golden light along the ridge.";
+
+/* Stable ids for the tiles: every interactive element needs one. */
 static const char *const THUMB_IDS[GAL_IMG_COUNT] = {
     "thumb00", "thumb01", "thumb02", "thumb03", "thumb04", "thumb05",
     "thumb06", "thumb07", "thumb08", "thumb09", "thumb10", "thumb11",
 };
 
-/* Process-global one-time image cache. It survives gallery_seed's AppState memset
-   (a re-seed re-COPIES these handles, never re-decodes) and its handles are
-   deterministic by load order - so the two frozen frames render identical handles. */
+/* A one-time image cache: it outlives gallery_seed's memset, so a re-seed copies
+   these handles rather than decoding twelve BMPs again. */
 static bool     g_imagesLoaded = false;
 static RC_Image g_images[GAL_IMG_COUNT];
 
-/* ── small helpers ───────────────────────────────────────────────────────── */
+/* A GALLERY IS A ROOM, AND A ROOM IS PAINTED NEUTRAL SO THE PICTURES CARRY THE
+   COLOUR. A blue-grey chrome competes with every warm frame hanging in it, so the
+   preset is re-surfaced in flat grey and blue is spent only on a SELECTED tile and
+   on an ACTION. The metrics are the preset's, so the widgets keep their corners. */
+RC_Style gallery_style(bool dark) {
+    RC_Style s = dark ? rcStyleDark() : rcStyleLight();
+    if (dark) {
+        s.background = RC_NEUTRAL_950;    /* the wall the tiles hang on   */
+        s.surface    = RC_NEUTRAL_900;    /* chrome bands, the detail pane */
+        s.surfaceAlt = RC_NEUTRAL_800;
+        s.chrome     = RC_NEUTRAL_900;
+        s.text       = RC_NEUTRAL_100;
+        s.textMuted  = RC_NEUTRAL_400;
+        s.border     = RC_NEUTRAL_800;
+    } else {
+        s.background = RC_NEUTRAL_200;
+        s.surface    = RC_NEUTRAL_50;
+        s.surfaceAlt = RC_NEUTRAL_200;
+        s.chrome     = RC_NEUTRAL_100;
+        s.text       = RC_NEUTRAL_900;
+        s.textMuted  = RC_NEUTRAL_500;
+        s.border     = RC_NEUTRAL_300;
+    }
+    s.primary      = RC_BLUE_600;
+    s.primaryHover = RC_BLUE_500;
+    return s;
+}
 
-/* A tag pill (rounded, muted). */
 static void gallery_chip(const char *label) {
     RC_Style s = rcGetStyle();
-    rcBox(.px = 9, .py = 3, .align = "cc", .borderRadius = "all-full", .bg = s.surfaceAlt) {
+    rcBox(.bg = s.surfaceAlt, .px = 9, .py = 3, .align = "cc",
+          .borderRadius = "all-full") {
         rcTextC(label, .font = F_SMALL, .color = s.textMuted);
     }
 }
 
-/* A "label ....... value" row for the details modal (precomputed strings only). */
+/* An icon button the size of a finger. Polling rcClicked marks the whole box
+   clickable, and the pointer cursor comes with that - no cursor call needed. */
+static bool nav_button(const char *id, RC_IconCallback icon) {
+    RC_Style s = rcGetStyle();
+    rcBox(.id = id, .bg = rcIsHovered(id) ? s.surfaceAlt : RC_TRANSPARENT, .align = "cc",
+          .borderRadius = "all-lg", .w = "44px", .h = "44px") {
+        icon(20.0f, s.textMuted);
+    }
+    return rcClicked(id);
+}
+
+/* A toolbar control. It greys out at the end of its range rather than
+   disappearing, so the band never reflows under the pointer. */
+static bool tool_button(const char *id, RC_IconCallback icon, bool live,
+                        const char *tip) {
+    RC_Style s = rcGetStyle();
+    rcBox(.id = id, .bg = (live && rcIsHovered(id)) ? s.surfaceAlt : RC_TRANSPARENT,
+          .align = "cc", .borderRadius = "all-md", .w = "34px", .h = "34px",
+          .tooltip = tip) {
+        icon(16.0f, live ? s.text : s.border);
+    }
+    return live && rcClicked(id);
+}
+
+/* Search and tag narrow the same wall, so both go through one call. */
+static void gallery_refilter(AppState *st) {
+    int t = st->tagFilter;
+    if (t < 0 || t >= GAL_TAG_COUNT) t = 0;
+    gallery_filter(&st->store, st->search, GAL_TAG_QUERIES[t]);
+}
+
+/* The tile-size stepper. Step 0 is the largest, so plus walks down the table. */
+static void gallery_zoom_steps(AppState *st) {
+    rcRow(.gap = 2, .align = "cl") {
+        if (tool_button("zoom_out", rcIconMinus, st->zoomStep < GAL_ZOOM_STEPS - 1,
+                        "Smaller tiles"))
+            st->zoomStep++;
+        if (tool_button("zoom_in", rcIconPlus, st->zoomStep > 0, "Larger tiles"))
+            st->zoomStep--;
+    }
+}
+
+/* A "label ... value" row for the details modal. */
 static void info_row(const char *label, const char *value) {
     RC_Style s = rcGetStyle();
-    rcRow(.w = "grow", .align = "cl") {
+    rcRow(.align = "cl", .w = "grow") {
         rcTextC(label, .font = F_SMALL, .color = s.textMuted);
         rcBox(.w = "grow") {}
         rcTextC(value, .font = F_BODY, .color = s.text);
     }
 }
 
-/* Aspect-fit (contain) an image inside a fixed WxH cell, centred on a surfaceAlt
-   letterbox, or a "?" placeholder if the handle is NULL (rcLoadImageFromMemory can
-   fail - the app degrades, never derefs a NULL). .image STRETCHES the texture to the
-   element, so a raw fixed box squashes non-landscape photos; this mirrors
-   gallery_detail's fit math so the thumbnail and the preview frame a photo the same. */
-static void thumb_image(const RC_Image *img, const GalImage *m, int w, int h) {
-    RC_Style s = rcGetStyle();
-    rcBox(.wType = RC_PX(w), .hType = RC_PX(h), .align = "cc",
-           .bg = s.surfaceAlt, .borderRadius = "all-sm") {
-        if (img && img->handle && m->w > 0 && m->h > 0) {
-            float scw = (float)w / (float)m->w;
-            float sch = (float)h / (float)m->h;
-            float sc  = scw < sch ? scw : sch;
-            int dw = (int)((float)m->w * sc);
-            int dh = (int)((float)m->h * sc);
-            if (dw < 1) dw = 1;
-            if (dh < 1) dh = 1;
-            rcBox(.image = img, .wType = RC_PX(dw), .hType = RC_PX(dh),
-                   .borderRadius = "all-sm") {}
-        } else {
-            rcTextL("?", .font = F_TITLE, .color = s.textMuted);
-        }
-    }
+/* Draw one photo into a frame the CALLER owns, and report whether it drew - a
+   decode can fail, and the caller then draws its own placeholder rather than
+   dereferencing a NULL handle. .image STRETCHES its texture to the element, so the
+   fit has to be computed here.
+
+   TWO FRAMINGS. `cover` scales by the LARGER ratio, so the frame fills and the
+   overflow is cropped: what the wall wants, and the caller must clip for it.
+   `contain` takes the smaller ratio, so the whole photograph is visible: what the
+   viewer wants. `cover` rounds and `contain` truncates, so neither leaves a seam
+   of frame showing nor spills one that does not clip. */
+static bool gallery_photo(const RC_Image *img, const GalImage *m, int w, int h, bool cover) {
+    if (!img || !img->handle || m->w <= 0 || m->h <= 0)
+        return false;
+    float scw = (float)w / (float)m->w;
+    float sch = (float)h / (float)m->h;
+    float sc  = cover ? (scw > sch ? scw : sch) : (scw < sch ? scw : sch);
+    int dw = (int)((float)m->w * sc + (cover ? 0.5f : 0.0f));
+    int dh = (int)((float)m->h * sc + (cover ? 0.5f : 0.0f));
+    if (dw < 1) dw = 1;
+    if (dh < 1) dh = 1;
+    rcBox(.wType = RC_PX(dw), .hType = RC_PX(dh), .image = img) {}
+    return true;
 }
 
-/* One thumbnail cell: image + title, the whole cell a click target. */
-static void gallery_thumb(AppState *st, int imgIdx) {
+/* The picture inside a tile, or the "?" a failed decode leaves - its own function
+   because both of the tile's element heads contain it. */
+static void gallery_tile_photo(AppState *st, int imgIdx, int w, int h) {
+    if (!gallery_photo(&st->images[imgIdx], &st->store.img[imgIdx], w, h, true))
+        rcTextL("?", .font = F_TITLE, .color = rcGetStyle().textMuted);
+}
+
+/* One tile of the wall: the photograph, edge to edge, and nothing else. A caption
+   strip under every tile is what makes a grid read as a file listing, and rounded
+   tiles at a 4 px gap read as cards - these are photographs.
+   TWO ELEMENT HEADS, not one with a ternary: .border's width is a fixed char[] and
+   takes a literal only, and a fully transparent border is not free either. */
+static void gallery_tile(AppState *st, int imgIdx, int w, int h, bool onePane) {
     RC_Style s = rcGetStyle();
     const char *id = THUMB_IDS[imgIdx];
     bool sel = (imgIdx == st->selected);
-    rcColumn(.id = id, .wType = RC_PX(GAL_CELL_W), .p = 6, .gap = 6, .borderRadius = "all-md",
-              .bg = sel ? s.surfaceAlt : (rcIsHovered(id) ? s.surface : RC_TRANSPARENT)) {
-        thumb_image(&st->images[imgIdx], &st->store.img[imgIdx], GAL_THUMB_W, GAL_THUMB_H);
-        rcBox(.w = "grow", .overflow = "hidden") {
-            rcTextC(st->store.img[imgIdx].title, .font = F_SMALL,
-                     .color = sel ? s.primary : s.text, .wrap = "n");
+    bool hov = rcIsHovered(id);
+    if (sel) {
+        rcBox(.id = id, .bg = s.surfaceAlt, .align = "cc", .overflow = "hidden",
+              .border = { .color = s.primary, .width = "3" },
+              .wType = RC_PX(w), .hType = RC_PX(h),
+              .overlay = rcAlpha(s.primary, 30)) {
+            gallery_tile_photo(st, imgIdx, w, h);
+        }
+    } else {
+        rcBox(.id = id, .bg = s.surfaceAlt, .align = "cc", .overflow = "hidden",
+              .wType = RC_PX(w), .hType = RC_PX(h),
+              .overlay = hov ? rcAlpha(RC_WHITE, 30) : RC_TRANSPARENT) {
+            gallery_tile_photo(st, imgIdx, w, h);
         }
     }
-    if (rcClicked(id))
+    if (rcClicked(id)) {
         st->selected = imgIdx;
+        /* One pane at a time: picking a photo IS the navigation. */
+        if (onePane)
+            st->detailOpen = true;
+    }
 }
 
-/* ── regions ─────────────────────────────────────────────────────────────── */
-
-/* The custom titlebar: brand + spacer + the bundled window controls. RC_ID_WINDOW_DRAG
-   makes the band draggable; on web these window verbs are inert. The theme toggle lives
-   in gallery_toolbar, NOT here: an interactive widget inside the drag band loses its
-   click to the OS window-move (only RC_ID_WINDOW_* controls are exempt). */
-static void gallery_topbar(void) {
+/* The custom titlebar: brand, spacer and the bundled window controls.
+   RC_ID_WINDOW_DRAG makes the band draggable, and a widget inside it loses its
+   click to the window move unless RC_ID_WINDOW_NODRAG opts it back out. */
+static void gallery_topbar(bool onePane) {
     RC_Style s = rcGetStyle();
-    rcRow(.id = RC_ID_WINDOW_DRAG, .w = "grow", .h = "52px", .bg = s.chrome,
-           .px = 14, .gap = 10, .align = "cl") {
-        rcBox(.w = "26px", .h = "26px", .align = "cc",
-               .bg = s.primary, .borderRadius = "all-md") {
-            rcTextL("RC", .font = F_SMALL, .color = RC_WHITE);
+    /* CHROME, NOT CONTENT: the drag strip is pinned at .titlebarHeight, so a band
+       that scaled with the content zoom would stop matching it. rcUnzoomed()
+       counter-scales the row it prefixes; at zoom 1 it changes nothing. */
+    rcUnzoomed()
+    rcRow(.id = RC_ID_WINDOW_DRAG, .bg = s.chrome, .gap = 10, .px = 14, .align = "cl",
+          .w = "grow", .h = "52px") {
+        /* Grey, not blue: the accent belongs to a selection and to an action. */
+        rcBox(.bg = s.surfaceAlt, .align = "cc", .borderRadius = "all-md", .w = "26px",
+              .h = "26px") {
+            rcTextL("RC", .font = F_SMALL, .color = s.text);
         }
-        rcTextL("RayClay Gallery", .font = F_TITLE, .color = s.text);
-        rcBox(.w = "grow") {}
+        /* On a narrow window the title is the band's widest child, and a child
+           that will not shrink widens the ROOT past the window and clips every
+           pane. So there it lives in a clip box and yields first. */
+        if (onePane) {
+            rcBox(.overflow = "hidden", .w = "grow") {
+                rcTextL("RayClay Gallery", .font = F_TITLE, .color = s.text, .wrap = "n");
+            }
+        } else {
+            rcTextL("RayClay Gallery", .font = F_TITLE, .color = s.text);
+            rcBox(.w = "grow") {}
+        }
         rcWindowControls();
     }
 }
 
-/* The toolbar (below the titlebar): the search box that filters the grid, the
-   "N photos / N results" count (precomputed by the backend on each filter), and the
-   theme toggle pinned far-right. The toggle lives HERE, not in the titlebar, because
-   this band is NOT a drag region - so its click reaches the widget (fix for a
-   drag-eaten toggle that made dark mode unreachable on desktop). */
-static void gallery_toolbar(AppState *st) {
+/* The toolbar, and everything in it narrows or resizes the wall below. The theme
+   toggle lives HERE and not in the titlebar, because the titlebar is a drag region
+   and a widget inside one loses its click to the window move.
+   Two element heads rather than one with branches inside: the wide arm is a single
+   band and the narrow arm a column of two, so neither tree carries the other's
+   wrapper, and narrow the search box gets a line to itself. */
+static void gallery_toolbar_wide(AppState *st) {
     RC_Style s = rcGetStyle();
-    rcRow(.w = "grow", .h = "56px", .bg = s.surface, .px = 16, .gap = 12, .align = "cl") {
-        rcBox(.w = "320px") {
-            if (rcTextInput("search", st->search, sizeof st->search,
-                             .placeholder = "Search photos"))
-                gallery_filter(&st->store, st->search);   /* no-op at freeze (no keystroke) */
+    /* The search box takes ALL the slack rather than sharing it with a spacer: a
+       band with a fixed box at one end, a toggle at the other and a void between
+       them is the commonest way a toolbar looks unfinished. */
+    rcBox(.w = "grow") {
+        if (rcTextInput("search", st->search, sizeof st->search,
+                         .placeholder = "Search photos"))
+            gallery_refilter(st);
+    }
+    rcBox(.w = "170px") {
+        if (rcCombo("tag_filter", &st->tagFilter, GAL_TAG_LABELS, GAL_TAG_COUNT))
+            gallery_refilter(st);
+    }
+    rcTextC(st->store.countStr, .font = F_SMALL, .color = s.textMuted);
+    gallery_zoom_steps(st);
+    rcBox(.bg = s.border, .w = "1px", .h = "22px") {}
+    rcRow(.gap = 8, .align = "cl") {
+        rcTextC(st->darkMode ? "Dark" : "Light", .font = F_SMALL, .color = s.textMuted);
+        rcToggle("tg_theme", &st->darkMode);
+    }
+}
+
+static void gallery_toolbar(AppState *st, bool onePane) {
+    RC_Style s = rcGetStyle();
+    if (onePane) {
+        rcColumn(.bg = s.chrome, .w = "grow") {
+            rcRow(.gap = 10, .px = 16, .align = "cl", .w = "grow",
+                  .hType = RC_PX(GAL_TOOLBAR_H)) {
+                rcBox(.w = "grow") {
+                    if (rcTextInput("search", st->search, sizeof st->search,
+                                     .placeholder = "Search photos"))
+                        gallery_refilter(st);
+                }
+                gallery_zoom_steps(st);
+                rcToggle("tg_theme", &st->darkMode);
+            }
+            /* The second line, which is also where the demo chip docks. */
+            rcRow(.gap = 10, .px = 16, .align = "cl", .w = "grow",
+                  .hType = RC_PX(GAL_COUNT_ROW_H)) {
+                rcBox(.w = "grow", .wMax = 170.0f) {
+                    if (rcCombo("tag_filter", &st->tagFilter, GAL_TAG_LABELS,
+                                GAL_TAG_COUNT))
+                        gallery_refilter(st);
+                }
+                rcTextC(st->store.countStr, .font = F_SMALL, .color = s.textMuted);
+                rcBox(.w = "grow") {}
+            }
         }
-        rcTextC(st->store.countStr, .font = F_SMALL, .color = s.textMuted);
-        rcBox(.w = "grow") {}
-        rcRow(.gap = 8, .align = "cl") {
-            rcTextC(st->darkMode ? "Dark" : "Light", .font = F_SMALL, .color = s.textMuted);
-            rcToggle("tg_theme", &st->darkMode);
+    } else {
+        rcRow(.bg = s.chrome, .gap = 12, .px = 16, .align = "cl", .w = "grow",
+              .hType = RC_PX(GAL_TOOLBAR_H)) {
+            gallery_toolbar_wide(st);
         }
     }
 }
 
-/* The clipped-scroll thumbnail grid (the B9 cost centre). Column count is derived
-   from the live viewport width, floored at 1 (a narrow pane / 500% zoom must never
-   divide by zero). visibleCount == 0 is an explicit empty-state branch. */
-static void gallery_grid(AppState *st, const AppCtx *ctx) {
-    RC_Style s = rcGetStyle();
-    /* Derive the grid width in the REFLOWED (logical / zoom) space: under the default
-       RC_ZOOM_LAYOUT the cells are laid out at window/zoom, so the column count must
-       reflow with the zoom too (a headline feature). zoom is 1.0 at bench -> a no-op there. */
-    int gridW = (int)((float)ctx->fbWidth / (ctx->zoom > 0.0f ? ctx->zoom : 1.0f))
-                - GAL_DETAIL_W - 40;
-    if (gridW < GAL_CELL_W) gridW = GAL_CELL_W;
-    int cols = gridW / (GAL_CELL_W + GAL_GRID_GAP);
-    if (cols < 1) cols = 1;
+/* One dated section: a header band, then the photographs taken that month.
 
-    rcColumn(.id = "GridScroll", .w = "grow", .h = "grow", .scroll = "v",
-              .bg = s.background, .p = 16, .gap = GAL_GRID_GAP) {
-        int n = st->store.visibleCount;
-        if (n <= 0) {
-            rcColumn(.w = "grow", .h = "grow", .align = "cc") {
-                rcTextL("No photos match your search.", .font = F_MD, .color = s.textMuted);
+   EVERY ROW FILLS THE WALL, AND THAT IS THE WHOLE JOB HERE. A fixed column count
+   leaves a rectangle of bare background wherever a month's count is not a multiple
+   of it, and no photo app a reader has used does that. Two rules avoid it with no
+   per-photo measurement: the rows are BALANCED, so four photos in three columns
+   are 2 + 2 rather than 3 + 1; and each row then divides the WHOLE wall among the
+   tiles it actually holds, the integer remainder spent a pixel at a time across
+   the leading tiles. A short row is therefore wider and taller than a full one,
+   which is the mosaic a photo wall wants, and the cap stops a lone photograph
+   becoming a wall of its own. The tiles crop, so none of this distorts a frame. */
+static void gallery_section(AppState *st, const GalSection *sec, int cols, int wallW,
+                            bool onePane) {
+    RC_Style s = rcGetStyle();
+    rcRow(.bg = s.surface, .gap = 10, .pt = 18, .pb = 8, .px = GAL_SECT_PAD,
+          .align = "cl", .w = "grow") {
+        rcTextC(sec->label, .font = F_MD, .color = s.text);
+        rcTextC(sec->countStr, .font = F_SMALL, .color = s.textMuted);
+    }
+    int rows   = (sec->count + cols - 1) / cols;
+    int placed = 0;
+    for (int r = 0; r < rows; r++) {
+        int left = sec->count - placed;
+        int n    = left / (rows - r) + (left % (rows - r) ? 1 : 0);
+        int cellW = (wallW - (n - 1) * GAL_GRID_GAP) / n;
+        if (cellW < 12) cellW = 12;           /* a 1 px photo at the narrowest window */
+        int slack = wallW - (n * cellW + (n - 1) * GAL_GRID_GAP);
+        if (slack < 0) slack = 0;
+        int cellH = cellW * 2 / 3;            /* 3:2 landscape, the frame most photos are */
+        if (cellH > wallW / 3) cellH = wallW / 3;
+        rcRow(.gap = GAL_GRID_GAP, .w = "grow") {
+            for (int c = 0; c < n; c++)
+                gallery_tile(st, st->store.visible[sec->first + placed + c],
+                             cellW + (c < slack ? 1 : 0), cellH, onePane);
+        }
+        placed += n;
+    }
+}
+
+/* The clipped-scroll wall, broken into dated sections. The column count comes
+   from the width the grid is given and the tile width the size control asks for,
+   so the wall reflows with the window, the zoom and that control.
+   EDGE TO EDGE, WITH ONE GUTTER: the container's only padding is the scrollbar
+   gutter, so the only space in the wall is the mortar between tiles. The count is
+   taken BEFORE the gutter comes off, so the gutter costs each tile a few pixels
+   and never a whole column. Two columns is the floor - one is a list. */
+static void gallery_grid(AppState *st, int gridW, bool onePane) {
+    RC_Style s = rcGetStyle();
+    int tileW = gal_tile_width(st->zoomStep);
+    int cols  = (gridW + GAL_GRID_GAP) / (tileW + GAL_GRID_GAP);
+    if (cols < 2) cols = 2;
+    int wallW = gridW - GAL_SCROLLBAR_GUTTER; /* the width the tiles actually divide */
+    if (wallW < 24) wallW = 24;
+
+    rcColumn(.id = "GridScroll", .bg = s.background, .gap = GAL_GRID_GAP,
+             .pr = GAL_SCROLLBAR_GUTTER, .scroll = "v", .w = "grow", .h = "grow") {
+        if (st->store.visibleCount <= 0) {
+            rcColumn(.gap = 6, .align = "cc", .w = "grow", .h = "grow") {
+                rcTextL("No photos match.", .font = F_MD, .color = s.textMuted);
+                rcTextL("Try another word, or a different tag.", .font = F_SMALL,
+                        .color = s.textMuted);
             }
         } else {
-            int rows = (n + cols - 1) / cols;
-            for (int r = 0; r < rows; r++) {
-                rcRow(.w = "grow", .gap = GAL_GRID_GAP) {
-                    for (int c = 0; c < cols; c++) {
-                        int k = r * cols + c;
-                        if (k < n)
-                            gallery_thumb(st, st->store.visible[k]);
-                    }
-                }
+            for (int i = 0; i < GAL_SECT_COUNT; i++) {
+                /* A filter can empty a month; its header goes with it. */
+                if (st->store.sect[i].count > 0)
+                    gallery_section(st, &st->store.sect[i], cols, wallW, onePane);
             }
         }
     }
 }
 
-/* The detail pane: the selected image (aspect-fit or placeholder), the 56px title,
-   metadata, an EDITABLE multiline caption (rcTextArea), and an info button. */
-static void gallery_detail(AppState *st) {
+/* The detail pane's content: the photograph over its mount, then a padded column
+   carrying the title, the metadata, an editable caption (rcTextArea) and the info
+   action. paneW and previewH are the mount's box, which sizes the fit. */
+static void gallery_detail_body(AppState *st, const GalImage *m, const RC_Image *img,
+                                int paneW, int previewH, bool onePane) {
+    RC_Style s = rcGetStyle();
+    /* THE ONE CONTROL THE ONE-PANE ARM ADDS: alone on the screen, the photo needs
+       a way back to the wall. The selection is deliberately left alone - closing a
+       view is not changing a selection, and the wide arm still needs one. */
+    if (onePane) {
+        rcRow(.gap = 8, .px = 8, .align = "cl", .w = "grow",
+              .hType = RC_PX(GAL_BACK_ROW_H)) {
+            if (nav_button("nav_back", rcIconPanelLeft))
+                st->detailOpen = false;
+            rcTextL("All photos", .font = F_BODY, .color = s.textMuted);
+        }
+    }
+    /* Aspect-FIT here rather than the wall's crop, because the whole frame has to
+       be visible - so a matte shows on the short axis. THE MATTE MUST BE READABLY
+       DARKER THAN THE PANE OR IT IS NOT A MOUNT, it is a hole: one tone of
+       difference is invisible at screen size in a dark theme, where a black wash
+       over the pane's own colour is a real step in both themes. */
+    rcBox(.bg = rcAlpha(RC_BLACK, 150), .align = "cc", .overflow = "hidden",
+          .w = "grow", .hType = RC_PX(previewH)) {
+        if (!gallery_photo(img, m, paneW, previewH, false))
+            rcTextL("No preview", .font = F_MD, .color = s.textMuted);
+    }
+    rcBox(.bg = s.border, .w = "grow", .h = "1px") {}
+    rcColumn(.gap = 12, .p = 18, .w = "grow", .h = "grow") {
+        /* It wraps rather than clipping: a title one word too long is still one. */
+        rcTextC(m->title, .font = F_TITLE, .color = s.text);
+        rcRow(.gap = 10, .align = "cl") {
+            rcTextC(m->date, .font = F_SMALL, .color = s.textMuted);
+            rcTextC(m->dim, .font = F_SMALL, .color = s.textMuted);
+            gallery_chip(m->tag);
+        }
+        rcTextL("Caption", .font = F_SMALL, .color = s.textMuted);
+        rcTextArea("gal_caption", st->caption, sizeof st->caption, .rows = 4);
+
+        rcBox(.w = "grow", .h = "grow") {}
+        /* The pane's only action, and so the only thing in it allowed to be blue:
+           a photo library spends its accent on what is selected and on what to do
+           next, and this is the second of those. */
+        if (rcButton("btn_info", "Photo info", RC_BTN_PRIMARY))
+            st->modalInfo = true;
+    }
+}
+
+/* The detail pane: a fixed column beside the wall, or alone and growing when it
+   is the only pane, and a scroll container where the window is too short for it.
+
+   TRAP: .scroll is a fixed char[] and cannot take a ternary. .className is a
+   const char * on the same record and reaches the same clip, so
+   `.className = scrolls ? "overflow-y-auto" : ""` is ONE element head - reach for
+   that whenever a fixed char[] field is all that stands between you and one head.
+   Two heads are kept here only because the arms also differ by .id.
+
+   THE PREVIEW IS THE PANE'S SLACK: where the pane fits it takes the body less the
+   text column, so a taller window spends its height on the picture; where it does
+   not it yields to 45% of the body, leaving the title in view as the cue that
+   there is more below. */
+static void gallery_detail(AppState *st, int paneW, int bodyH, bool onePane, bool scrolls) {
     RC_Style s = rcGetStyle();
     int i = st->selected;
     if (i < 0 || i >= GAL_IMG_COUNT)
         return;                              /* guard BEFORE opening the element */
-    /* Sync the caption buffer to the selected image in THIS pass (the grid may have
-       just changed the selection above), so the detail card never shows a one-frame
-       stale caption. Guarded => a no-op at the freeze (captionOf == selected already). */
+    int previewH = bodyH - GAL_DETAIL_TEXT_H - (onePane ? GAL_BACK_ROW_H : 0);
+    if (scrolls && bodyH * 45 / 100 < previewH)
+        previewH = bodyH * 45 / 100;
+    if (previewH < 100) previewH = 100;
+    /* Sync the caption buffer to the selected photo in THIS pass, so the pane never
+       shows a one-frame stale caption. SAVE BEFORE LOAD: one buffer serves all
+       twelve photos, so whatever the user typed must go back to the photo they are
+       leaving before the buffer is reloaded - otherwise the edit is lost with
+       nothing on screen saying so. */
     if (st->captionOf != i) {
+        gallery_store_caption(&st->store, st->captionOf, st->caption);
         gallery_load_caption(&st->store, i, st->caption, sizeof st->caption);
         st->captionOf = i;
     }
     const GalImage *m = &st->store.img[i];
     const RC_Image *img = &st->images[i];
 
-    rcColumn(.wType = RC_PX(GAL_DETAIL_W), .h = "grow", .bg = s.surface,
-              .p = 18, .gap = 12) {
-        /* the preview: aspect-fit inside a fixed frame, or a placeholder if NULL */
-        rcBox(.w = "grow", .h = "230px", .align = "cc",
-               .bg = s.surfaceAlt, .borderRadius = "all-lg") {
-            if (img->handle && m->w > 0 && m->h > 0) {
-                int maxW = GAL_DETAIL_W - 60, maxH = 214;
-                float scw = (float)maxW / (float)m->w;
-                float sch = (float)maxH / (float)m->h;
-                float sc  = scw < sch ? scw : sch;
-                int dw = (int)((float)m->w * sc);
-                int dh = (int)((float)m->h * sc);
-                if (dw < 1) dw = 1;
-                if (dh < 1) dh = 1;
-                rcBox(.image = img, .wType = RC_PX(dw), .hType = RC_PX(dh),
-                       .borderRadius = "all-md") {}
-            } else {
-                rcTextL("No preview", .font = F_MD, .color = s.textMuted);
-            }
+    if (scrolls) {
+        rcColumn(.id = "DetailScroll", .bg = s.surface, .scroll = "v",
+                 .h = "grow", .wType = onePane ? RC_GROW : RC_PX(GAL_DETAIL_W)) {
+            gallery_detail_body(st, m, img, paneW, previewH, onePane);
         }
-        /* the HERO title (F_HERO = 56px, the crisp-text-persists heading) */
-        rcBox(.w = "grow", .overflow = "hidden") {
-            rcTextC(m->title, .font = F_HERO, .color = s.text, .wrap = "n");
+    } else {
+        rcColumn(.bg = s.surface, .h = "grow",
+                 .wType = onePane ? RC_GROW : RC_PX(GAL_DETAIL_W)) {
+            gallery_detail_body(st, m, img, paneW, previewH, onePane);
         }
-        rcRow(.gap = 10, .align = "cl") {
-            rcTextC(m->dim, .font = F_SMALL, .color = s.textMuted);
-            gallery_chip(m->tag);
-        }
-        /* the editable multiline caption - a real text area over the app's buffer */
-        rcTextL("Caption", .font = F_SMALL, .color = s.textMuted);
-        rcTextArea("gal_caption", st->caption, sizeof st->caption, .rows = 4);
-
-        rcBox(.w = "grow", .h = "grow") {}
-        if (rcButton("btn_info", "Photo info", RC_BTN_DEFAULT))
-            st->modalInfo = true;
     }
 }
 
-/* The photo-details modal - OUTSIDE the root so the scrim covers the window. Every
-   line is a precomputed backend string or a literal (NO rcFormat: a modal can render
-   during warmup where ctx->arena is NULL). */
-static void gallery_modal(AppState *st) {
+/* The photo-details modal, placed OUTSIDE the root so its scrim covers the window.
+   Its 360 px card is wider than a phone less its safe bands, so the one-pane arm
+   sizes it in vw instead.
+   THE DISPLAY FACE LIVES HERE, not in the pane: F_HERO is 56 px, and a heading
+   that size needs the whole panel width rather than a 380 px column beside the
+   grid. It is also the one place in the app that shows text staying crisp at 2x
+   zoom, which is what a face this large is for. */
+static void gallery_modal(AppState *st, bool onePane) {
     RC_Style s = rcGetStyle();
     int i = st->selected;
     if (i < 0 || i >= GAL_IMG_COUNT)
@@ -273,10 +516,10 @@ static void gallery_modal(AppState *st) {
     const GalImage *m = &st->store.img[i];
 
     if (rcBeginModal("modal_info", &st->modalInfo)) {
-        rcColumn(.w = "360px", .bg = s.surface, .p = 18, .gap = 12,
-                  .borderRadius = "all-xl") {
-            rcTextL("Photo details", .font = F_TITLE, .color = s.text);
-            info_row("Title", m->title);
+        rcColumn(.bg = s.surface, .gap = 12, .p = 18, .borderRadius = "all-xl",
+                 .w = onePane ? "84vw" : "360px") {
+            rcTextC(m->title, .font = F_HERO, .color = s.text);
+            info_row("Taken", m->date);
             info_row("Dimensions", m->dim);
             info_row("Category", m->tag);
             rcRow(.gap = 8) {
@@ -288,22 +531,27 @@ static void gallery_modal(AppState *st) {
     }
 }
 
-/* ── the app contract ────────────────────────────────────────────────────── */
-
 void gallery_seed(AppState *st, unsigned seed) {
-    gallery_memzero(st, sizeof *st);          /* B2: zero all (incl. padding) THEN set */
-    gallery_backend_seed(&st->store, seed);   /* metadata + precomputed strings + filter */
-    st->selected  = GALLERY_BENCH_PICK;       /* default selection (coord-independent) */
-    st->captionOf = -1;                       /* force a caption sync on the first update */
-    st->darkMode  = true;
-    st->seeded    = true;
+    gallery_memzero(st, sizeof *st);          /* zero all, including padding, then set */
+    gallery_backend_seed(&st->store, seed);   /* metadata, display strings, first filter */
+    st->selected   = GALLERY_BENCH_PICK;
+    st->captionOf  = -1;                      /* force a caption sync on the first pass */
+    st->darkMode   = true;
+    st->zoomStep   = 1;                       /* the middle tile size */
+    st->tagFilter  = 0;                       /* every tag */
+    st->detailOpen = false;                   /* narrow: open on the wall, not the photo */
+    st->seeded     = true;
 
-    /* One-time process decode of the 12 procedural BMPs (see g_images note above). */
+    /* One decode per process, not per seed. */
     if (!g_imagesLoaded) {
-        unsigned char buf[GAL_BMP_CAP];       /* ~37 KB, on the stack, seed-path only */
+        /* STATIC, not automatic: this buffer is ~324 KB and the web build's default
+           stack is 64 KB. It is written and consumed entirely inside this one-time
+           branch, so it holds no state a re-seed could observe. */
+        static unsigned char buf[GAL_BMP_CAP];
         for (int i = 0; i < GAL_IMG_COUNT; i++) {
             size_t len = gallery_encode_bmp(&st->store, i, buf, sizeof buf);
-            g_images[i] = len ? rcLoadImageFromMemory(buf, (int)len) : (RC_Image){0};
+            /* RC_LIT spells a compound literal so the line compiles as C and C++. */
+            g_images[i] = len ? rcLoadImageFromMemory(buf, (int)len) : RC_LIT(RC_Image){0};
         }
         g_imagesLoaded = true;
     }
@@ -314,54 +562,94 @@ void gallery_seed(AppState *st, unsigned seed) {
 void gallery_update(AppState *st, const AppCtx *ctx) {
     (void)st;
     (void)ctx;
-    /* No per-frame simulation: the gallery content is static, and the caption sync
-       (the only state advance) runs in gallery_detail so a same-frame selection
-       change is reflected immediately. A dt<=0 freeze is thus trivially a no-op. */
+    /* Nothing to advance: the content is static, and the caption sync - the only
+       state this app moves - runs in gallery_detail, so a selection made this frame
+       is reflected in the same frame. */
 }
 
 void gallery_layout(AppState *st, const AppCtx *ctx) {
-    rcSetStyle(st->darkMode ? rcStyleDark() : rcStyleLight());
+    rcSetStyle(gallery_style(st->darkMode));
     RC_Style s = rcGetStyle();
 
-    rcColumn(.id = "Root", .w = "grow", .h = "grow", .bg = s.background) {
-        gallery_topbar();
-        gallery_toolbar(st);
+    /* Safe area in layout units - a phone's status bar, cutout and home indicator.
+       Zero on desktop, so Root's padding is a no-op there. */
+    RC_Insets safe = app_safe(ctx);
+
+    /* Branch on the SPACE, never the platform. bodyW and bodyH are what the Body
+       row is given once Root has spent the safe bands. */
+    const int  bodyW   = (int)(app_view_w(ctx) - safe.left - safe.right);
+    const bool onePane = bodyW < GAL_ONE_PANE_W;
+    const int  bodyH   = (int)(app_view_h(ctx) - safe.top - safe.bottom) - GAL_CHROME_H
+                         - (onePane ? GAL_COUNT_ROW_H : 0);
+    /* Two ideas, two bools: a window is easily wide enough and too short. */
+    const bool detailScrolls = bodyH < GAL_DETAIL_H + (onePane ? GAL_BACK_ROW_H : 0);
+    const bool showGrid      = !onePane || !st->detailOpen;
+    const bool showDetail    = !onePane || st->detailOpen;
+
+    rcColumn(.id = "Root", .bg = s.background, .pt = (uint16_t)safe.top,
+             .pb = (uint16_t)safe.bottom, .pl = (uint16_t)safe.left,
+             .pr = (uint16_t)safe.right, .w = "grow", .h = "grow") {
+        gallery_topbar(onePane);
+        gallery_toolbar(st, onePane);
         rcRow(.id = "Body", .w = "grow", .h = "grow") {
-            gallery_grid(st, ctx);
-            gallery_detail(st);
+            /* Wide: wall AND detail. One pane: the wall is home and the detail is
+               what a tap opens, so the two are exclusive. The wall is handed the
+               width it will actually get, because that is what its tiles divide. */
+            if (showGrid)
+                gallery_grid(st, onePane ? bodyW : bodyW - GAL_DETAIL_W, onePane);
+            if (showDetail)
+                gallery_detail(st, onePane ? bodyW : GAL_DETAIL_W, bodyH, onePane,
+                               detailScrolls);
         }
     }
-    gallery_modal(st);                        /* the modal sits outside Root */
+    gallery_modal(st, onePane);               /* the modal sits outside Root */
 
-    rcScrollbar("GridScroll");
+    /* EACH BAR CARRIES THE CONDITION ITS PANE CARRIES - the Body block above read
+       back, arm for arm. rcScrollbar draws the bar for a container laid out THIS
+       frame; name one this frame did not build and the call is dropped with a
+       warning. The detail pane takes a second condition because it only clips when
+       the height makes it. */
+    if (showGrid)                    rcScrollbar("GridScroll");
+    if (showDetail && detailScrolls) rcScrollbar("DetailScroll");
 }
 
 void gallery_demo_chrome(AppState *st, const AppCtx *ctx) {
     if (ctx->mode != APP_DEMO || !ctx->arena)
         return;
-    /* A floating perf/status HUD - demo-only, PASSTHROUGH so it never blocks the
-       titlebar controls. rcFormat is fine here (never in the bench path). */
-    RC_String hud = rcFormat(ctx->arena, "%.0f fps \xc2\xb7 %s",
-                                ctx->dt > 0.0f ? 1.0f / ctx->dt : 0.0f, st->store.countStr);
+    /* A passive readout: floating, so it never reflows the UI, and PASSTHROUGH, so
+       clicks fall through it. Narrow it docks in the toolbar's second line; wide it
+       takes the bottom LEFT corner, because the bottom right is the pane's action
+       row and a debug chip level with a primary button reads as a button. */
+    RC_Insets safe = app_safe(ctx);
+    const bool onePane = (int)(app_view_w(ctx) - safe.left - safe.right) < GAL_ONE_PANE_W;
+    RC_String hud = onePane
+        ? rcFormat(ctx->arena, "%.0f fps", ctx->fps)
+        : rcFormat(ctx->arena, "%.0f fps \xc2\xb7 %s", ctx->fps, st->store.countStr);
+    const RC_Anchor corner = onePane ? RC_ANCHOR_TOP_RIGHT : RC_ANCHOR_BOTTOM_LEFT;
+    const float     dx     = onePane ? -16.0f - safe.right : 16.0f + safe.left;
+    const float     dy     = onePane ? safe.top + (float)(GAL_CHROME_H + 8)
+                                     : -16.0f - safe.bottom;
     rcBox(.id = "demo_hud", .bg = rcAlpha(RC_BLACK, 150), .px = 10, .py = 5,
            .borderRadius = "all-full",
-           .floating = { .to = RC_ATTACH_ROOT, .parent = RC_ANCHOR_BOTTOM_RIGHT,
-                         .element = RC_ANCHOR_BOTTOM_RIGHT, .offset = { -16, -16 },
+           .floating = { .to = RC_ATTACH_ROOT, .parent = corner, .element = corner,
+                         .offset = { dx, dy },
                          .capture = RC_CAPTURE_PASSTHROUGH }) {
         rcText(hud, .font = F_SMALL, .color = RC_WHITE);
     }
 }
 
 void gallery_bench_step(AppState *st, const AppInputSink *in, int frame) {
-    (void)st;   /* every action is synthetic input (B3); selection is the seeded pick */
-    /* The frozen scripted scenario. At/after GALLERY_BENCH_WARMUP the app HOLDS (a
-       strict no-op) so a double-rendered frame is byte-identical.
-
-       DETERMINISM AT THE HOLD: caret blink + tooltip dwell read a REAL clock, so the
-       frozen frame carries NO focused input and the pointer is parked OFF-CANVAS. The
-       scene freezes on the SEEDED selection (GALLERY_BENCH_PICK) - no coordinate-
-       fragile click-select. COORDS are a FIRST DRAFT for 1280x720 (the detail pane is
-       the rightmost GAL_DETAIL_W band; the caption sits mid-pane); retune them. */
+    (void)st;   /* every action is synthetic input; the selection is the seeded one */
+    /* The scripted scenario. Every action goes through the input sink, so the real
+       hit-test, focus and caret paths run; at GALLERY_BENCH_WARMUP the app holds.
+       The caret blink and tooltip dwell run on real time, not the injected dt, so
+       the held frame must carry no focused input and no hovered tooltip - hence the
+       blur and off-canvas park below.
+       THE CAPTION COORDINATE IS DERIVED, NOT GUESSED: at 1280x720 the pane's stack
+       is 108 chrome + the preview (the body less GAL_DETAIL_TEXT_H) + 1 rule + 18
+       pad + 30 title + 12 + 18 meta + 12 + 12 label + 12, which puts the text area
+       at y 590. Re-derive it whenever that stack changes - a miss types into
+       nothing, and nothing asserts on that. */
     if (!in || frame >= GALLERY_BENCH_WARMUP)
         return;                                        /* the HOLD */
 
@@ -369,7 +657,7 @@ void gallery_bench_step(AppState *st, const AppInputSink *in, int frame) {
         in->move(in->ctx, 300.0f, 300.0f);            /* hover the grid, then scroll it */
         in->wheel(in->ctx, 0.0f, -1.0f);              /* (pointer over the grid first)   */
     } else if (frame == 16) {
-        in->move(in->ctx, 1040.0f, 470.0f);           /* focus the caption (end-clamped) */
+        in->move(in->ctx, 1180.0f, 620.0f);           /* focus the caption (end-clamped) */
         in->button(in->ctx, APP_MBTN_LEFT, true);
     } else if (frame == 17) {
         in->button(in->ctx, APP_MBTN_LEFT, false);

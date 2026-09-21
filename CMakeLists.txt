@@ -1,7 +1,7 @@
 # ==============================================================================
 #  RayClay - one command: cmake -B build && cmake --build build --parallel 4
 #
-#  Builds the vendored patched GLFW, then librayclay as a static library from a
+#  Builds the selected vendored window host, then librayclay as a static library from a
 #  generated two-line implementation TU over the single rayclay.h. Consume via
 #  add_subdirectory() and link rayclay::rayclay. On a checkout that carries
 #  examples/ (the 'examples' branch), the examples build too.
@@ -9,7 +9,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 # Refuse an in-source build - it scatters CMakeCache.txt / CMakeFiles/ and the
-# GLFW binary tree through the source. Checked before project() so the configure
+# host binary tree through the source. Checked before project() so the configure
 # aborts before writing the cache; the REALPATH compare also catches `cmake -B .`
 # and a symlinked root.
 get_filename_component(_rc_src_real "${CMAKE_SOURCE_DIR}" REALPATH)
@@ -37,6 +37,33 @@ project(rayclay
     LANGUAGES C)
 message(STATUS "RayClay ${PROJECT_VERSION}")
 
+set(RC_IOS OFF)
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    set(RC_IOS ON)
+endif()
+set(RC_DESKTOP_TARGETS_DEFAULT ${PROJECT_IS_TOP_LEVEL})
+if(ANDROID OR RC_IOS)
+    set(RC_DESKTOP_TARGETS_DEFAULT OFF)
+endif()
+
+# Internal build selection, matching the modular library. No runtime selector
+# or host types are exposed in the public declarations.
+if(ANDROID OR RC_IOS OR EMSCRIPTEN)
+    set(RC_WINDOW_BACKEND_DEFAULT SDL3)
+else()
+    set(RC_WINDOW_BACKEND_DEFAULT GLFW)
+endif()
+set(RC_WINDOW_BACKEND "${RC_WINDOW_BACKEND_DEFAULT}" CACHE STRING
+    "Window host: GLFW (desktop default) or SDL3 (desktop option; mobile and web)")
+set_property(CACHE RC_WINDOW_BACKEND PROPERTY STRINGS GLFW SDL3)
+if(NOT RC_WINDOW_BACKEND MATCHES "^(GLFW|SDL3)$")
+    message(FATAL_ERROR "Unknown RC_WINDOW_BACKEND: ${RC_WINDOW_BACKEND} (GLFW or SDL3)")
+endif()
+if((ANDROID OR RC_IOS OR EMSCRIPTEN) AND NOT RC_WINDOW_BACKEND STREQUAL "SDL3")
+    message(FATAL_ERROR "Android, iOS and the web require RC_WINDOW_BACKEND=SDL3")
+endif()
+message(STATUS "rayclay: window host ${RC_WINDOW_BACKEND}")
+
 set(OpenGL_GL_PREFERENCE GLVND)
 if(PROJECT_IS_TOP_LEVEL AND NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
@@ -58,12 +85,30 @@ endif()
 # WHY IT IS HERE AND NOT ONLY IN THE FLAGS BELOW. Section-GC is unconditional a
 # few lines down because a single-object library is useless without it. This
 # option is what remains once that is already on: link-time optimisation across
-# the whole tree, and STBTT_STATIC, which turns the vendored font rasteriser's
-# ~200 external symbols into file-statics so the linker may inline and discard
-# them. Measured on the shipped header, gcc 15.3.1, Release, x86-64, on the
-# do-nothing app: 833,536 -> 783,248 bytes stripped, a saving of 50,288 (6.0%).
+# the whole tree. Measured on the shipped header, gcc 15.3.1, Release, x86-64, on
+# the do-nothing app: 833,536 -> 783,248 bytes stripped, a saving of 50,288 (6.0%).
 #
-# It is applied DIRECTORY-WIDE and BEFORE add_subdirectory(glfw), deliberately:
+# STBTT_STATIC IS NOT PART OF THIS OPTION. rayclay.h defines it for its own
+# bundled copy of stb_truetype, so EVERY consumer of rayclay.h gets that
+# internal linkage whether or not they opt in - which is
+# the point, because the single header is the primary shipping artifact and is
+# the build that would otherwise pay full price. Measured on a -O3 -DNDEBUG
+# implementation object: .text 678,259 -> 643,891,
+# a saving of 34,368 B, with global stbtt_ symbols 59 -> 0. THE SYMBOL COUNT IS
+# THE ORACLE, not the bytes: a byte delta alone could mean a define never
+# reached the compiler, while 59 -> 0 proves the LINKAGE changed.
+# The `add_compile_definitions(STBTT_STATIC)` below is therefore now REDUNDANT
+# for the shipped header rather than load-bearing. It is kept because the header
+# guards with `!defined(STBTT_STATIC)`, so a consumer predefining it costs
+# nothing and eats no -Wmacro-redefined, and because removing a define is a
+# consumer-visible change that buys zero bytes.
+# WARN: the SIZE OF THE WIN DEPENDS ON THE CONSUMER'S LINK, so quote the pair
+# and never one number - a consumer who uses THIS build file section-GCs
+# unconditionally a few lines down and has therefore already discarded most of
+# the unreachable stb, so their saving is small; a consumer who drops rayclay.h
+# into a build with no section-GC is the one who sees the full amount.
+#
+# It is applied DIRECTORY-WIDE and BEFORE the host add_subdirectory(), deliberately:
 # most of the bytes are in the vendored window library, not in rayclay's own
 # object, and a posture set after the subdirectory would miss them entirely.
 #
@@ -97,17 +142,75 @@ elseif(RC_SIZE_OPT AND MSVC)
                    "and LTO are not applied on this toolchain.")
 endif()
 
-# Desktop: system OpenGL + the vendored GLFW (patched - a system GLFW silently
-# loses Wayland titlebar dragging). On web, emscripten supplies the GLFW shim
-# (-sUSE_GLFW=3) and WebGL2, so neither is built here. GLFW_BUILD_X11 /
-# GLFW_BUILD_WAYLAND remain consumer-settable for a single-backend Linux trim.
-if(NOT EMSCRIPTEN)
+# OpenGL is the desktop renderer. On web it is WebGL2 through sokol's GLES3
+# backend, supplied by the browser, so nothing is looked up there.
+if(NOT EMSCRIPTEN AND NOT ANDROID AND NOT RC_IOS)
     find_package(OpenGL REQUIRED)
+endif()
+
+# Both dependency trees stay external to the header. Only the selected host
+# is built. SDL3's emscripten port owns the web canvas, with no windowing shim.
+# The sources under SDL3/ are upstream release-3.4.16 with nothing edited, so
+# every file there compares byte-for-byte against that release. What was left
+# out is whole directories this build never reads - upstream's own test/ and
+# examples/, its docs and its IDE project files. They are built here static
+# except on Android, with unused subsystems forced OFF, so a
+# consumer pays for windowing, input and the GL context and nothing else.
+#
+# A parent application may already own an SDL3 build. Its subsystem and linkage
+# choices are not ours to override in the shared cache, so an existing
+# SDL3::SDL3 target wins and nothing below runs. RC_SDL_SOURCE_DIR is the middle
+# ground for a consumer who wants THEIR SDL3 source tree built with THESE knobs.
+if(RC_WINDOW_BACKEND STREQUAL "SDL3" AND NOT TARGET SDL3::SDL3)
+    set(RC_SDL_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/SDL3"
+        CACHE PATH "SDL3 sources (defaults to the shipped copy under SDL3/)")
+    if(NOT EXISTS "${RC_SDL_SOURCE_DIR}/CMakeLists.txt")
+        message(FATAL_ERROR
+            "RC_SDL_SOURCE_DIR='${RC_SDL_SOURCE_DIR}' has no CMakeLists.txt. "
+            "RayClay ships its window host under SDL3/ beside this file; either "
+            "restore that directory from a fresh checkout, or point this at an "
+            "intact SDL3 source tree.")
+    endif()
+    if(ANDROID)
+        set(SDL_SHARED ON CACHE BOOL "" FORCE)
+        set(SDL_STATIC OFF CACHE BOOL "" FORCE)
+    else()
+        set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+        set(SDL_STATIC ON CACHE BOOL "" FORCE)
+    endif()
+    # Everything RayClay does not call is OFF, and FORCED so a stale cache entry
+    # from an upstream default cannot quietly re-enable a subsystem. This is
+    # already the minimal configuration: re-measuring with every remaining knob
+    # explicitly OFF produces a byte-identical binary, so nothing here
+    # is optional tuning. (The names are built by interpolation, so a grep for a
+    # literal `set(SDL_AUDIO` finds nothing - read the loop.)
+    foreach(_sdl_unused TESTS TEST_LIBRARY EXAMPLES INSTALL AUDIO JOYSTICK
+                        HAPTIC HIDAPI SENSOR CAMERA RENDER GPU POWER DIALOG TRAY)
+        set(SDL_${_sdl_unused} OFF CACHE BOOL "" FORCE)
+    endforeach()
+    # RayClay does not inhibit the screensaver - that is a fullscreen-video and
+    # game concern, not a GUI toolkit's. Saying so removes libXScrnSaver from
+    # the packages a Linux consumer must install: SDL treats a requested-but-
+    # unfindable X11 feature as a HARD configure error, not a warning.
+    set(SDL_X11_XSCRNSAVER OFF CACHE BOOL "" FORCE)
+    add_subdirectory("${RC_SDL_SOURCE_DIR}" sdl EXCLUDE_FROM_ALL)
+    # SDL's EGL headers require C11; change only the targets created here.
+    foreach(_sdl_target SDL3-shared SDL3-static SDL_uclibc)
+        if(TARGET ${_sdl_target})
+            set_target_properties(${_sdl_target} PROPERTIES C_STANDARD 11)
+        endif()
+    endforeach()
+endif()
+
+# GLFW includes the vendored nobar Wayland move/resize patch. An existing
+# parent target wins, just as it does for SDL3.
+if(RC_WINDOW_BACKEND STREQUAL "GLFW" AND NOT TARGET glfw)
     set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-    set(GLFW_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
-    set(GLFW_BUILD_DOCS     OFF CACHE BOOL "" FORCE)  # defaults ON upstream
-    set(GLFW_INSTALL        OFF CACHE BOOL "" FORCE)
-    add_subdirectory(glfw)
+    set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+    set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
+    add_subdirectory(glfw glfw EXCLUDE_FROM_ALL)
+    set(RC_GLFW_IS_VENDORED_PATCHED ON)
 endif()
 
 # The library IS the header; generate the one implementation TU so no consumer
@@ -117,35 +220,155 @@ file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/rayclay_impl.c"
 add_library(rayclay STATIC "${CMAKE_CURRENT_BINARY_DIR}/rayclay_impl.c")
 add_library(rayclay::rayclay ALIAS rayclay)
 target_include_directories(rayclay PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+# The bundled default application icon is inert on the web (the page owns the
+# favicon and the SDL host compiles its icon call out), yet its four PNG arrays
+# stayed alive through section GC in every page. Measured 2026-09-13:
+# hello.wasm 793,546 -> 777,613 B.
+if(EMSCRIPTEN)
+    target_compile_definitions(rayclay PRIVATE RC_NO_DEFAULT_APP_ICON)
+endif()
 
 # The implementation TU needs C11 (with the toolchain's default extensions);
 # consumers including rayclay.h need only C99. /utf-8: the sources hold UTF-8
 # string literals MSVC would otherwise decode in the system codepage.
 set_target_properties(rayclay PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON)
+if(ANDROID)
+    set_target_properties(rayclay PROPERTIES POSITION_INDEPENDENT_CODE ON)
+endif()
 if(MSVC)
     target_compile_options(rayclay PRIVATE /utf-8)
 endif()
+
+# C++ CONSUMERS GET THE DIALECT FROM US, and rayclay.h's own #error block
+# PROMISES they do: "A CMake consumer gets the dialect automatically ... and
+# never sees this" - the line below is what keeps that promise true.
+# clay.h needs C99, C++20 or MSVC;
+# g++ and clang++ both still default to gnu++17, so a consumer who adds a C++
+# target and links rayclay::rayclay would hit clay's #error naming a vendored
+# dependency they never asked for.
+# GUARDED on the C++ compiler being loaded: this project() is LANGUAGES C, and
+# requesting a CXX feature with no CXX compiler is a configure error. A consumer
+# whose top level is C-only and who adds C++ later gets no dialect from us and
+# is not left guessing - the header's #error names the flag.
+if(CMAKE_CXX_COMPILER_LOADED)
+    target_compile_features(rayclay INTERFACE cxx_std_20)
+endif()
+
+# THE SAME C++ CONSUMER GETS -Wno-missing-field-initializers FROM US, and it is
+# INTERFACE because the consumer's own translation units are where it fires.
+# Every element macro (rcBox, rcRow, rcColumn ...) expands to a designated
+# initialiser of RC_ComponentOptions that names the fields you wrote and
+# value-initialises the rest; those zeros are the DSL's contract, not an
+# omission. In C neither gcc nor clang warns about it. In C++ g++ warns under
+# -Wextra, and clang does so from 18 (-Wmissing-designated-field-
+# initializers, a subgroup of the same flag, llvm/llvm-project#56628), so a C++
+# consumer building at -Wextra -Werror takes a HARD ERROR from rayclay.h at its
+# first rcBox without it. Measured 2026-09-15 on g++ 15.3.1 and clang++ 21.1.8:
+# both red, both green with this one flag. It has to be INTERFACE: the same flag
+# set PRIVATE on this library's own object never reaches the TU that expands
+# the macro.
+# Scoped to C++ so a C consumer's warning set is untouched, and to the families
+# that spell the flag: cl.exe rejects any -W<name> as D8021. No
+# CMAKE_CXX_COMPILER_LOADED guard: a generator expression on a language that is
+# never enabled is simply never true. Keep this line and the guarded feature
+# above together - removing either alone changes what a C-only consumer builds.
+target_compile_options(rayclay INTERFACE
+    $<$<COMPILE_LANG_AND_ID:CXX,GNU,Clang,AppleClang>:-Wno-missing-field-initializers>)
 
 # Section-GC, on by default: the library is ONE object file, so without it every
 # consumer binary would carry the whole framework. MSVC Release already links
 # with /OPT:REF,ICF.
 if(NOT MSVC)
     target_compile_options(rayclay PRIVATE -ffunction-sections -fdata-sections)
-    target_link_options(rayclay INTERFACE
-        $<IF:$<PLATFORM_ID:Darwin>,-Wl$<COMMA>-dead_strip,-Wl$<COMMA>--gc-sections>)
+    if(APPLE)
+        target_link_options(rayclay INTERFACE -Wl,-dead_strip)
+    else()
+        target_link_options(rayclay INTERFACE -Wl,--gc-sections)
+    endif()
 endif()
 
 # A dependency-only interface target: the platform libraries the single header's
 # implementation links against, WITHOUT the implementation itself. The library
-# links it PUBLIC (so consumers inherit them); the differential tests on the
-# 'test' branch also link it, because each test compiles its own copy of the
-# implementation and so cannot link librayclay, yet needs the same libraries to
-# resolve the window/titlebar backend it pulls in. Section-GC drops that code on
-# ELF but not on PE, so on Windows the tests genuinely need these to link.
+# links it PUBLIC, so consumers inherit them. It is also the target to link if
+# you compile your own copy of the implementation - defining
+# RAYCLAY_IMPLEMENTATION in one of your own translation units rather than
+# linking librayclay - because you then still need the libraries the window and
+# titlebar backends resolve against. Section-GC drops that code on ELF but not
+# on PE, so on Windows those libraries are genuinely needed at link time.
 add_library(rayclay_deps INTERFACE)
 
-if(NOT EMSCRIPTEN)
-    target_link_libraries(rayclay_deps INTERFACE glfw OpenGL::GL)
+if(RC_WINDOW_BACKEND STREQUAL "SDL3")
+    target_compile_definitions(rayclay PRIVATE RC_WINDOW_BACKEND_SDL3=1)
+    target_link_libraries(rayclay_deps INTERFACE SDL3::SDL3)
+else()
+    target_link_libraries(rayclay_deps INTERFACE glfw)
+endif()
+
+# --------------------------------------------------------------------------
+#  THE OPTIONAL SEAM ENTRIES (the RCI_WINDOW_HAS_* window capabilities)
+# --------------------------------------------------------------------------
+#  KEEP EVERY ONE OF THESE, BECAUSE THE CONSEQUENCE OF DROPPING ONE IS
+#  INVISIBLE. Each macro guards BOTH a seam helper and its only caller, and
+#  rayclay.h defaults it to 0. So an absent definition here does not fail to
+#  configure, does not fail to build and does not fail to link - it silently
+#  compiles the feature OUT of the library you get, and nothing says so.
+#
+#  What each one switches on, enumerated in full so it can be read rather than
+#  inferred from the code below:
+#    * rcWindowSetSize             resizing the window from the application
+#    * the Wayland libdecor hint   the guard against a decoration-plugin abort
+#    * rcGetKeyboardInsets         the mobile soft-keyboard insets
+#    * the iOS rotation background the surfaces UIKit shows mid-rotation
+#  Every one of them is INERT unless its define is set here.
+
+if(NOT EMSCRIPTEN AND NOT ANDROID AND NOT RC_IOS)
+    # rcWindowSetSize: a desktop window is the app's to resize, a phone screen
+    # and a page's canvas are not. Both desktop seams define it, so this keys on
+    # the PLATFORM, not on the backend.
+    target_compile_definitions(rayclay PRIVATE RCI_WINDOW_HAS_SET_SIZE=1)
+
+    # rcWindowRaise: bringing a window to the front and giving it the keyboard
+    # only means something where windows are stacked and one of them holds
+    # focus. Both desktop seams have the call (glfwFocusWindow, SDL_RaiseWindow),
+    # so this keys on the PLATFORM, not on the backend.
+    target_compile_definitions(rayclay PRIVATE RCI_WINDOW_HAS_RAISE=1)
+
+    # rcWindowSetTitle: the NATIVE window title - what the task switcher, the
+    # taskbar and the window list read. A phone surface has no name a user sees,
+    # and on the web the title belongs to the DOCUMENT rather than to a window.
+    # Both desktop seams have the call (glfwSetWindowTitle, SDL_SetWindowTitle),
+    # so this keys on the PLATFORM, not on the backend.
+    target_compile_definitions(rayclay PRIVATE RCI_WINDOW_HAS_SET_TITLE=1)
+
+    # The Wayland libdecor hint: an app that draws its own titlebar must not make
+    # the host bring up a decoration plugin, because on Wayland that plugin can
+    # abort the process before any window appears. LINUX ONLY - both desktop
+    # seams honour it there; Windows and macOS have no libdecor to speak to.
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        target_compile_definitions(rayclay PRIVATE RCI_WINDOW_HAS_OWN_DECORATIONS_HINT=1)
+    endif()
+endif()
+
+if(RC_WINDOW_BACKEND STREQUAL "SDL3")
+    if(RC_IOS)
+        # The surfaces UIKit shows around the frame during a rotation; only the
+        # iOS host has such surfaces, so only it compiles the call.
+        target_compile_definitions(rayclay PRIVATE RCI_WINDOW_HAS_SET_BACKGROUND=1)
+    endif()
+    if(RC_IOS OR ANDROID)
+        # rcGetKeyboardInsets: only a host with a soft keyboard defines it.
+        target_compile_definitions(rayclay PRIVATE RCI_WINDOW_HAS_KEYBOARD_INSETS=1)
+        # The library raises and lowers the keyboard with editor focus.
+        target_compile_definitions(rayclay PRIVATE RCI_WINDOW_HAS_SOFT_KEYBOARD=1)
+    endif()
+endif()
+
+if(ANDROID)
+    target_link_libraries(rayclay_deps INTERFACE GLESv3 m log ${CMAKE_DL_LIBS})
+elseif(RC_IOS)
+    target_link_libraries(rayclay_deps INTERFACE "-framework OpenGLES")
+elseif(NOT EMSCRIPTEN)
+    target_link_libraries(rayclay_deps INTERFACE OpenGL::GL)
 
     if(WIN32)
         # The titlebar backend names these with #pragma comment(lib,...), which
@@ -153,40 +376,90 @@ if(NOT EMSCRIPTEN)
         target_link_libraries(rayclay_deps INTERFACE comctl32 dwmapi shell32 user32 gdi32)
     endif()
 
-    if(UNIX AND NOT APPLE)
-        find_package(X11 REQUIRED)  # the titlebar's X11 backend calls Xlib directly
-        target_link_libraries(rayclay_deps INTERFACE ${X11_LIBRARIES} m ${CMAKE_DL_LIBS})
+    if(APPLE)
+        # nobar's Cocoa backend, compiled into the single header's titlebar
+        # implementation, talks to the Objective-C runtime directly. Named here
+        # rather than inherited from the window host's own frameworks, because a
+        # dependency a library only borrows from its neighbour breaks the day
+        # the neighbour is swapped.
+        target_link_libraries(rayclay_deps INTERFACE "-framework AppKit" "-framework Foundation")
     endif()
-    # macOS: Cocoa/IOKit/CoreFoundation flow transitively from the glfw target.
+
+    if(UNIX AND NOT APPLE)
+        # Mirror the selected host's display backends into nobar. A parent
+        # host with unspecified flags keeps both, with a visible warning.
+        if(RC_WINDOW_BACKEND STREQUAL "GLFW")
+            set(_rc_x11_option GLFW_BUILD_X11)
+            set(_rc_wayland_option GLFW_BUILD_WAYLAND)
+        else()
+            set(_rc_x11_option SDL_X11)
+            set(_rc_wayland_option SDL_WAYLAND)
+        endif()
+        set(_rc_host_x11 ON)
+        set(_rc_host_wayland ON)
+        foreach(_backend x11 wayland)
+            if(DEFINED ${_rc_${_backend}_option})
+                set(_rc_host_${_backend} ${${_rc_${_backend}_option}})
+            else()
+                message(WARNING "${_rc_${_backend}_option} is unresolved; keeping its titlebar glue")
+            endif()
+        endforeach()
+        if(RC_WINDOW_BACKEND STREQUAL "GLFW")
+            target_compile_definitions(rayclay PRIVATE
+                RC_GLFW_X11=$<BOOL:${_rc_host_x11}>
+                RC_GLFW_WAYLAND=$<BOOL:${_rc_host_wayland}>)
+            # WAYLAND DRAG AND RESIZE NEED RAYCLAY'S PATCHED GLFW, and the block
+            # above that adds it says whether you got it. glfwWaylandStartWindowMove
+            # and its resize twin are a RayClay patch: they are in NO released GLFW
+            # and in no GLFW header. Defining it against a stock GLFW is a LINK
+            # ERROR naming two symbols you will not find anywhere.
+            #
+            # THERE IS NO HIT-TEST FALLBACK ON THE GLFW SEAM, so do not expect the
+            # titlebar to degrade into a draggable window. `rci_window_set_hit_test`
+            # there is `(void)w; (void)cb; (void)user; return false;`, and GLFW
+            # exposes no hit-test API that could make it do otherwise. The SDL3
+            # backend IS different - SDL_SetWindowHitTest exists, so that seam does
+            # degrade to a compositor-dragged window. GLFW does not.
+            #
+            # THE ACTUAL CONSEQUENCE, because you will hit it and no gate can see it:
+            # a custom-titlebar app on Wayland, built against an unpatched GLFW you
+            # brought yourself, has NO move path at all - not a degraded one. nobar
+            # reports no MOVE capability and the seam's fallback is a stub, so the
+            # window cannot be dragged by its own title bar. Two real remedies:
+            # build against the vendored GLFW (which carries the patch), or set
+            # nativeFrame so the compositor draws a frame it will move.
+            if(RC_GLFW_IS_VENDORED_PATCHED)
+                target_compile_definitions(rayclay PRIVATE RC_GLFW_WAYLAND_MOVE=1)
+                message(STATUS "rayclay: Wayland window move/resize ON (RayClay's patched GLFW)")
+            else()
+                message(STATUS "rayclay: Wayland window move/resize OFF - an existing `glfw` "
+                               "target was found, and RayClay's Wayland move patch is not in "
+                               "any released GLFW. A custom titlebar then has NO drag path on "
+                               "Wayland - there is no fallback. Remove your glfw target to use "
+                               "the shipped one, or set nativeFrame so the compositor draws a "
+                               "frame it will move.")
+            endif()
+        endif()
+        if(_rc_host_x11)
+            find_package(X11 REQUIRED)
+            target_link_libraries(rayclay_deps INTERFACE ${X11_LIBRARIES})
+        else()
+            target_compile_definitions(rayclay PRIVATE NTB_NO_X11)
+        endif()
+        target_link_libraries(rayclay_deps INTERFACE m ${CMAKE_DL_LIBS})
+    endif()
 endif()
 
 target_link_libraries(rayclay PUBLIC rayclay_deps)
 
 # Implementation-only compile definitions: they matter only when compiling the
 # single header's implementation, so they stay PRIVATE - a consumer that merely
-# includes rayclay.h never sees them, while the 'test' branch copies them onto
-# its test targets so those compile the implementation exactly as the library.
+# includes rayclay.h never sees them. If you compile the implementation
+# yourself, set them on that target too, so it is built exactly as the library.
 if(NOT EMSCRIPTEN)
     if(MINGW)
         # msvcrt printf has no %zu; select MinGW's ISO-conforming stdio instead.
         target_compile_definitions(rayclay PRIVATE __USE_MINGW_ANSI_STDIO=1)
-    endif()
-
-    if(UNIX AND NOT APPLE)
-        # Mirror GLFW's selected backends into the titlebar glue: a GLFW built
-        # single-backend must not pull the absent backend's native accessors.
-        # Default ON (both) if a replaced GLFW does not define them - fail safe.
-        set(_rc_glfw_x11 ON)
-        set(_rc_glfw_wayland ON)
-        if(DEFINED GLFW_BUILD_X11)
-            set(_rc_glfw_x11 ${GLFW_BUILD_X11})
-        endif()
-        if(DEFINED GLFW_BUILD_WAYLAND)
-            set(_rc_glfw_wayland ${GLFW_BUILD_WAYLAND})
-        endif()
-        target_compile_definitions(rayclay PRIVATE
-            RC_GLFW_X11=$<BOOL:${_rc_glfw_x11}>
-            RC_GLFW_WAYLAND=$<BOOL:${_rc_glfw_wayland}>)
     endif()
 endif()
 
@@ -196,10 +469,9 @@ endif()
 #
 #  The sentinel is a source file rather than the directory, deliberately. A
 #  directory test asks whether anything landed under examples/, which is weaker
-#  than asking whether the sources this block enumerates are present. ci.yml
-#  gates its example job the same way, on hashFiles('examples/ex00_hello/hello.c').
+#  than asking whether the sources this block enumerates are actually present.
 # ------------------------------------------------------------------------------
-option(RC_BUILD_EXAMPLES "Build the RayClay examples" ${PROJECT_IS_TOP_LEVEL})
+option(RC_BUILD_EXAMPLES "Build the RayClay examples" ${RC_DESKTOP_TARGETS_DEFAULT})
 
 if(RC_BUILD_EXAMPLES AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/examples/ex00_hello/hello.c)
     add_executable(rayclay_ex00_hello                   examples/ex00_hello/hello.c)
@@ -208,9 +480,23 @@ if(RC_BUILD_EXAMPLES AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/examples/ex00_hello/
     add_executable(rayclay_ex03_2000s_gui               examples/ex03_2000s_gui/main.c)
     add_executable(rayclay_ex04_2010s_gui               examples/ex04_2010s_gui/main.c)
     add_executable(rayclay_ex05_2020s_gui               examples/ex05_2020s_gui/main.c)
+    # The one C++ example. It needs a C++ compiler the C examples do not, so it is
+    # added only when one exists: a C-only toolchain still builds every other
+    # example, and the ONE list below gains this target only when it was made.
+    # The cxx_std_20 INTERFACE guard above ran before CXX was enabled here, so the
+    # dialect is pinned on the target itself; the -Wno-missing-field-initializers
+    # INTERFACE option is a generator expression and reaches it at generate time.
+    include(CheckLanguage)
+    check_language(CXX)
+    if(CMAKE_CXX_COMPILER)
+        enable_language(CXX)
+        add_executable(rayclay_ex06_cpp_kanban           examples/ex06_cpp_kanban/main.cpp)
+        set_target_properties(rayclay_ex06_cpp_kanban PROPERTIES
+            CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+    endif()
     add_executable(rayclay_ex10_rayclay_widgets_gallery examples/ex10_rayclay_widgets_gallery/main.c)
     # ex11 is the one example with no web arm: it SCANS A DIRECTORY and WRITES .h
-    # files, which a browser page cannot do. Excluded rather than shipped broken.
+    # files, which a browser page cannot do, so it has no web target.
     if(NOT EMSCRIPTEN)
         add_executable(rayclay_ex11_rayclay_icon_converter  examples/ex11_rayclay_icon_converter/main.c)
     endif()
@@ -218,20 +504,43 @@ if(RC_BUILD_EXAMPLES AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/examples/ex00_hello/
     # The ex20-ex29 band: fully functional demo apps, single-source like the
     # decade lineup rather than split like the bench suite (nothing benchmarks
     # them, so there is no reason for a second TU).
-    add_executable(rayclay_ex20_system_monitor          examples/ex20_system_monitor/main.c)
-    add_executable(rayclay_ex21_data_explorer           examples/ex21_data_explorer/main.c)
+    add_executable(rayclay_ex20_system_monitor          examples/ex20_system_monitor/src/main.c)
+    add_executable(rayclay_ex21_data_explorer           examples/ex21_data_explorer/src/main.c)
     # ex22 loads three real typefaces at runtime from examples/assets/fonts/.
     # It needs NO injected defines: its source defaults RC_EX22_FONT_DIR and
     # RC_EX22_ICON to repo-root-relative paths, which is exactly this tree's
     # layout, so it runs from the repo root like ex10 does.
-    add_executable(rayclay_ex22_docs_reader             examples/ex22_docs_reader/main.c)
+    add_executable(rayclay_ex22_docs_reader             examples/ex22_docs_reader/src/main.c)
     # ex23 virtualizes 100,000 rows from a generated dataset: single source, no
     # assets, no local header, so it needs nothing beyond the target.
-    add_executable(rayclay_ex23_issue_inbox             examples/ex23_issue_inbox/main.c)
+    add_executable(rayclay_ex23_issue_inbox             examples/ex23_issue_inbox/src/main.c)
     # ex24 loads an .svg at RUNTIME and draws the same artwork beside its
     # generated-header twin. Its artwork is examples/assets/icons/, shipped
     # beside it, so it needs no injected define.
-    add_executable(rayclay_ex24_svg_live                examples/ex24_svg_live/main.c)
+    add_executable(rayclay_ex24_svg_live                examples/ex24_svg_live/src/main.c)
+    # The ex30+ band: examples INTENDED for a phone (portrait-first, 393x852).
+    # They are included because they are the worked examples for building a
+    # mobile application with RayClay.
+    #
+    # DECLARED OFF THE WEB, the same way ex11 is and for a reason of the same
+    # kind: both are marked NO_WEB, so neither has a page, and a target
+    # the web arm builds but rc_web_example() never names would emit a bare
+    # <target>.js with no shell and no card in the hub - a build artifact nothing
+    # can open. ex11 has no page because a browser has no filesystem; these two
+    # have none because a browser is not a phone. A page for them is a DESIGN
+    # decision (a portrait viewport in a desktop tab), not a consequence of this
+    # export, so it stays unmade here.
+    #
+    # They need no injected define and no asset: one translation unit each, over
+    # headers beside it under src/app/ and src/platform/, which the foreach below
+    # puts on the include path from the target's own first source. ex32's
+    # "icons/..." headers resolve through examples/assets, and the shared
+    # header they themselves include by a bare name sits beside them in that
+    # same directory, so it resolves too.
+    if(NOT EMSCRIPTEN)
+        add_executable(rayclay_ex30_keyboard_form       examples/ex30_keyboard_form/src/main.c)
+        add_executable(rayclay_ex32_tab_navigator       examples/ex32_tab_navigator/src/main.c)
+    endif()
     # The bench suite: production-shaped multi-file apps (GUI TU + thin runner).
     add_executable(rayclay_bench_messenger
                    examples/bench/messenger/main.c
@@ -283,8 +592,9 @@ if(RC_BUILD_EXAMPLES AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/examples/ex00_hello/
             # which Chrome's WebGL rejects ("texSubImage2D: ... must not be
             # resizable") - the glyph-atlas upload then faults and every page
             # renders blank.
+            # SDL3 arrives through the rayclay target's PUBLIC link (the vendored
+            # tree compiled for wasm) and needs no windowing flag here.
             target_link_options(${target} PRIVATE
-                -sUSE_GLFW=3
                 -sMIN_WEBGL_VERSION=2 -sMAX_WEBGL_VERSION=2 -sFULL_ES3
                 -sALLOW_MEMORY_GROWTH=1 -sGROWABLE_ARRAYBUFFERS=0 -sSTACK_SIZE=8MB
                 -sENVIRONMENT=web -sMALLOC=emmalloc
@@ -295,6 +605,9 @@ if(RC_BUILD_EXAMPLES AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/examples/ex00_hello/
         endfunction()
 
         rc_web_example(rayclay_ex05_2020s_gui               dashboard)
+        if(TARGET rayclay_ex06_cpp_kanban)
+            rc_web_example(rayclay_ex06_cpp_kanban           kanban)
+        endif()
         rc_web_example(rayclay_ex00_hello                   hello)
         rc_web_example(rayclay_ex01_1980s_gui               gui1980s)
         rc_web_example(rayclay_ex02_1990s_gui               gui1990s)
@@ -327,20 +640,38 @@ if(RC_BUILD_EXAMPLES AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/examples/ex00_hello/
             "SHELL:--preload-file ${RC_DEMO_PNG}@/assets/rayclay-logo-1024.png")
 
         # The trailing slash matters: the source concatenates a filename onto it.
+        # RC_EX22_ICON IS NULL HERE AND THE PNG IS NOT PRELOADED: an application icon
+        # has no effect on the web (the page owns the favicon; the SDL host compiles
+        # its icon call out), so the 52,071-byte logo was downloaded by every visitor
+        # and ignored. Measured 2026-09-13: reader.data 111,655 -> 59,584 B. NULL,
+        # not undefined, because theme.h's fallback is the desktop path, absent in
+        # MEMFS, and a named-but-unreadable icon warns on every page load.
         target_compile_definitions(rayclay_ex22_docs_reader PRIVATE
             RC_EX22_FONT_DIR="/assets/fonts/"
-            RC_EX22_ICON="/assets/rayclay-logo-1024.png")
+            RC_EX22_ICON=NULL)
         target_link_options(rayclay_ex22_docs_reader PRIVATE
             "SHELL:--preload-file ${RC_EX22_FONTS}/Lato-Regular.ttf@/assets/fonts/Lato-Regular.ttf"
             "SHELL:--preload-file ${RC_EX22_FONTS}/Lato-Bold.ttf@/assets/fonts/Lato-Bold.ttf"
-            "SHELL:--preload-file ${RC_EX22_FONTS}/AdwaitaMono-Regular.ttf@/assets/fonts/AdwaitaMono-Regular.ttf"
-            "SHELL:--preload-file ${RC_DEMO_PNG}@/assets/rayclay-logo-1024.png")
+            "SHELL:--preload-file ${RC_EX22_FONTS}/AdwaitaMono-Regular.ttf@/assets/fonts/AdwaitaMono-Regular.ttf")
 
         # ex24 opens its .svg sources at RUN time, so the web arm must ship them.
         # Deliberately not a directory preload: examples/assets/icons/ also holds
         # the GENERATED .h headers and a licence, none of which ex24 opens, and a
         # .data bundle is downloaded by every visitor.
-        set(RC_EX24_SVGS chart-column expand folder maximize minimize minus
+        # rayclay-logo is FIRST because it is what ex24 OPENS ON - the default
+        # artwork, not an icon in the grid. Omitting it leaves the web arm's BY
+        # PATH and HANDLE panes empty on first run and shows the amber "that path
+        # did not open" state, while desktop is fine because it resolves the
+        # literal from the repo. The page still LOADS fine (it opens on
+        # chart-column, which is packaged), so nothing looks wrong until the
+        # developer clicks the first card - and the app then advises "launch from
+        # the repository root", which cannot apply in a browser and reads as the
+        # developer's own mistake.
+        # This list must name EVERY SVG the example can open. A name absent here
+        # is simply not packaged, and the example then reports a file it cannot
+        # find - which reads as the developer's own mistake, not a packaging gap.
+        set(RC_EX24_SVGS rayclay-logo
+                         chart-column expand folder maximize minimize minus
                          panel-left panel-right settings shrink x)
         foreach(_svg IN LISTS RC_EX24_SVGS)
             target_link_options(rayclay_ex24_svg_live PRIVATE
@@ -360,7 +691,9 @@ if(RC_BUILD_EXAMPLES AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/examples/ex00_hello/
     endif()
 
     # ONE list, so the web arm cannot drift from the desktop one by a target.
-    # ex11 is appended rather than listed because it exists only off the web.
+    # ex11 and the ex30+ band are appended rather than listed because they exist
+    # only off the web - the same guard their add_executable() calls sit behind,
+    # so a target can never be linked on an arm that did not declare it.
     set(_rc_examples
         rayclay_ex00_hello rayclay_ex01_1980s_gui rayclay_ex02_1990s_gui
         rayclay_ex03_2000s_gui rayclay_ex04_2010s_gui rayclay_ex05_2020s_gui
@@ -372,7 +705,12 @@ if(RC_BUILD_EXAMPLES AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/examples/ex00_hello/
         rayclay_bench_platformer rayclay_bench_gallery
         rayclay_bench_opsdash)
     if(NOT EMSCRIPTEN)
-        list(APPEND _rc_examples rayclay_ex11_rayclay_icon_converter)
+        list(APPEND _rc_examples rayclay_ex11_rayclay_icon_converter
+                                 rayclay_ex30_keyboard_form
+                                 rayclay_ex32_tab_navigator)
+    endif()
+    if(TARGET rayclay_ex06_cpp_kanban)
+        list(APPEND _rc_examples rayclay_ex06_cpp_kanban)
     endif()
 
     foreach(_ex IN LISTS _rc_examples)
@@ -382,6 +720,16 @@ if(RC_BUILD_EXAMPLES AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/examples/ex00_hello/
         target_include_directories(${_ex} PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/examples/bench
             ${CMAKE_CURRENT_SOURCE_DIR}/examples/assets)
+        # The rule is the one the desktop examples already follow, stated the same
+        # way: an example laid out as a small application keeps its sources under
+        # examples/<name>/src and includes them ROOT-RELATIVE, so that root must
+        # be on its path. Derived from the target's own first source, so a
+        # conversion needs no edit in EITHER file and the two cannot drift.
+        get_target_property(_rc_ex_sources ${_ex} SOURCES)
+        list(GET _rc_ex_sources 0 _rc_ex_first_source)
+        get_filename_component(_rc_ex_src_dir "${_rc_ex_first_source}" DIRECTORY)
+        target_include_directories(${_ex} PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/${_rc_ex_src_dir})
         target_compile_options(${_ex} PRIVATE $<$<C_COMPILER_ID:MSVC>:/utf-8>)
     endforeach()
 else()
@@ -407,15 +755,14 @@ else()
 endif()
 
 # ------------------------------------------------------------------------------
-#  Differential tests - present only on the 'test' branch. Like the examples
-#  block above, the EXISTS check keeps this inert on 'main'/'examples', so one
-#  CMakeLists serves every branch. Build + run them from the repo root with:
-#      cmake -B build && cmake --build build && ctest --test-dir build
+#  Tests, if a test/ directory is ever present beside this file. Neither
+#  published branch carries one, so - exactly like the examples block above -
+#  the EXISTS check leaves this inert and one CMakeLists serves every checkout.
 # ------------------------------------------------------------------------------
-option(RC_BUILD_TESTS "Build the RayClay differential tests" ${PROJECT_IS_TOP_LEVEL})
+option(RC_BUILD_TESTS "Build the RayClay differential tests" ${RC_DESKTOP_TARGETS_DEFAULT})
 
 if(RC_BUILD_TESTS AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/test/CMakeLists.txt
-   AND NOT EMSCRIPTEN)
+   AND NOT EMSCRIPTEN AND NOT ANDROID AND NOT RC_IOS)
     enable_testing()
     add_subdirectory(test)
 endif()

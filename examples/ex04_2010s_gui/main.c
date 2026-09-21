@@ -1,33 +1,32 @@
-/*
-================================================================================
-    main.c - RayClay ex04: 2010s Material Design tasks app
-================================================================================
+/*  main.c - RayClay ex04: a 2010s Material Design tasks app.
 
-    A flat Material-Design (circa 2014) inbox/tasks app: a bold INDIGO app bar,
-    a PINK floating action button, WHITE cards with soft drop shadows on a light
-    gray canvas, medium-radius corners and generous whitespace - the Google
-    Material look of the early 2010s. Add tasks, check them off (they mute + get
-    a "done" flag), delete a card, and filter completed items with a toggle.
+    Flat Material (circa 2014): a bold indigo app bar, a pink floating action
+    button, white cards with soft drop shadows on a light grey canvas. Add
+    tasks, check them off, delete a card, hide completed items with a toggle.
 
-    Same source -> desktop AND web (no #ifdef; .nativeFrame is ignored on web).
-    Zero-asset: the bundled Latin-1 font is baked at runtime; icons are drawn
-    procedurally. No files are loaded.
-
-    Aesthetic: 2010s / flat Material Design (Material 2014).
+    Shows a custom app bar that doubles as the OS drag region, rcTextInput,
+    rcCheckbox, rcToggle, a scrolling list with rcScrollbar, a floating action
+    button and safe-area insets. Zero-asset: the bundled Latin-1 font is baked
+    at runtime and the icons are compiled-in headers. One source, desktop and web.
 
     Build target: rayclay_ex04_2010s_gui
-================================================================================
 */
 
 #include "rayclay.h"
 
+#include "icons/rc_icons_maximize.h"
+#include "icons/rc_icons_minus.h"
+#include "icons/rc_icons_plus.h"
 #include "icons/rc_icons_x.h"
 
-/* ── types ───────────────────────────────────────────────────────────────── */
+/* The FAB's geometry, spelled once: 56 dp is the Material FAB and 24 dp is its
+   margin from the edges. The list and the cards reserve this pair between them. */
+#define FAB_SIZE    56
+#define FAB_MARGIN  24
 
 #define MAX_TASKS 32
 
-/* Font ladder baked from the bundled face at these sizes - zero-asset. */
+/* Font ladder baked from the bundled face at these sizes. */
 typedef enum { F_SMALL = 0, F_BODY, F_TITLE, F_COUNT } AppFont;
 
 typedef struct {
@@ -38,14 +37,10 @@ typedef struct {
 typedef struct {
     Task  tasks[MAX_TASKS];
     int   count;
-    char  input[48];   /* new-task text-input buffer            */
-    bool  showDone;    /* Settings: include completed in the list */
-    int   pendingDelete; /* -1 = none. Applied at the top of the next frame -
-                            see the note at delete_task. Note: -1, not 0, since
-                            a zero-init would mean "delete task 0". */
+    char  input[48];     /* new-task text-input buffer              */
+    bool  showDone;      /* include completed tasks in the list     */
+    int   pendingDelete; /* -1 = none, never 0; applied at the top of the next layout */
 } AppState;
-
-/* ── helpers ─────────────────────────────────────────────────────────────── */
 
 static void add_task(AppState *st) {
     if (st->count >= MAX_TASKS || !st->input[0])
@@ -62,31 +57,42 @@ static void delete_task(AppState *st, int i) {
     st->count--;
 }
 
-/* ── app bar ─────────────────────────────────────────────────────────────── */
+/* A window control draws its glyph through an RC_IconCallback, so the glyph picks
+   its own ink - these three sit on saturated indigo beside a white title. */
+static void ctl_minimize(float size, RC_Color ink) { (void)ink; rcIconMinus(size, RC_WHITE); }
+static void ctl_maximize(float size, RC_Color ink) { (void)ink; rcIconMaximize(size, RC_WHITE); }
+static void ctl_close(float size, RC_Color ink)    { (void)ink; rcIconX(size, RC_WHITE); }
 
-/* The indigo Material app bar doubles as the native drag region (desktop) and
-   carries the title and the window controls. */
-static void appbar(void) {
-    /* Chrome, not content. RC_AppOptions.titlebarHeight freezes the OS drag
-       strip in physical px, so a band that grew with the content zoom would
-       stop matching the strip the OS lets you drag. Measured before this
-       existed: at 2x zoom the drawn band was exactly twice the draggable one. */
-    rcUnzoomed() {
-        rcRow(.id = RC_ID_WINDOW_DRAG, .w = "grow", .h = "56px", .bg = RC_INDIGO_500,
-               .px = 16, .gap = 12, .align = "cl",
-               .shadow = { rcAlpha(RC_BLACK, 40), 0, 2, 6, 0 }) {
-            rcTextL("Tasks", .font = F_TITLE, .color = RC_WHITE);
-            rcBox(.w = "grow") {}
-            rcWindowControls();
+/* The indigo app bar is also the native drag region, and it paints UNDER the
+   status bar as Material does: the SURFACE spans the window and the CONTENT is
+   padded in by the safe insets. Spend the insets on the outer column, NOT inside
+   rcUnzoomed() - a number written in there is counter-scaled by the zoom. The
+   band itself is held at the physical .titlebarHeight the OS drag strip is frozen
+   at. .id is required: .shadow is keyed by element id, and an id-less element
+   drops its shadow and warns. */
+static void appbar(RC_Insets safe) {
+    RC_Style s = rcGetStyle();
+
+    rcColumn(.id = "appbar", .bg = s.chrome, .pt = (uint16_t)safe.top,
+             .pl = (uint16_t)safe.left, .pr = (uint16_t)safe.right, .w = "grow",
+             .shadow = { rcAlpha(RC_BLACK, 40), 0, 2, 6, 0 }) {
+        rcUnzoomed() {
+            rcRow(.id = RC_ID_WINDOW_DRAG, .bg = s.chrome, .gap = 12, .px = 16,
+                  .align = "cl", .w = "grow", .h = "56px") {
+                rcTextL("Tasks", .font = F_TITLE, .color = RC_WHITE);
+                rcBox(.w = "grow") {}
+                rcRow(.gap = 2, .align = "cc") {
+                    rcWindowControlButton(RC_WINCTL_MINIMIZE, ctl_minimize, 16.0f);
+                    rcWindowControlButton(RC_WINCTL_MAXIMIZE, ctl_maximize, 16.0f);
+                    rcWindowControlButton(RC_WINCTL_CLOSE,    ctl_close,    16.0f);
+                }
+            }
         }
     }
 }
 
-/* ── one task card ───────────────────────────────────────────────────────── */
-
-/* A white Material card: soft shadow, medium radius, a bound checkbox, the task
-   text (muted colour when done - no strikethrough), and a delete X wired
-   through rcClicked. Returns the requested delete index, or -1. */
+/* A white Material card: a bound checkbox, the task text (muted when done) and a
+   delete X. Returns the index the user asked to delete, or -1. */
 static int task_card(RC_App *app, AppState *st, int i) {
     RC_Arena   *mem = rcAppArena(app);
     RC_Style    s   = rcGetStyle();
@@ -95,20 +101,28 @@ static int task_card(RC_App *app, AppState *st, int i) {
     const char *del_id   = rcFormat(mem, "del_%d",  i).chars;
     int del = -1;
 
-    rcBox(.id = card_id, .w = "grow", .bg = s.surface, .px = 12, .py = 8,
-           .borderRadius = "all-lg",
-           .shadow = { rcAlpha(RC_BLACK, 28), 0, 2, 8, 0 }) {
-        rcRow(.w = "grow", .align = "cl", .gap = 12) {
+    /* The card runs the full width of the list and carries the FAB's horizontal
+       clearance as its own right padding, so the surface reaches the edge and the
+       delete X does not. */
+    rcBox(.id = card_id, .bg = s.surface, .pl = 12, .pr = FAB_SIZE + FAB_MARGIN,
+          .py = 8, .borderRadius = "all-lg", .w = "grow",
+          .shadow = { rcAlpha(RC_BLACK, 28), 0, 2, 8, 0 }) {
+        rcRow(.gap = 12, .align = "cl", .w = "grow") {
             rcCheckbox(check_id, "", &st->tasks[i].done);
-            rcBox(.w = "grow", .overflow = "hidden") {
+            /* Word-wrapped, never clipped - a long title must survive a phone in
+               portrait. .align = "cl" keeps the checkbox and the X centred as the
+               card grows a line. */
+            rcBox(.w = "grow") {
                 rcTextC(st->tasks[i].text, .font = F_BODY,
-                         .color = st->tasks[i].done ? s.textMuted : s.text,
-                         .wrap = "n");
+                         .color = st->tasks[i].done ? s.textMuted : s.text);
             }
-            rcBox(.id = del_id, .w = "32px", .h = "32px", .align = "cc",
-                   .bg = rcIsHovered(del_id) ? s.surfaceAlt : RC_TRANSPARENT,
-                   .borderRadius = "all-full") {
-                rcIconX(16.0f, s.textMuted);
+            /* The only destructive control in the app, so its hover has to read as
+               destructive: a red tint and a red icon, two channels not one faint fill. */
+            bool delHot = rcIsHovered(del_id);
+            rcBox(.id = del_id,
+                  .bg = delHot ? rcAlpha(RC_RED_500, 40) : RC_TRANSPARENT,
+                  .align = "cc", .borderRadius = "all-full", .w = "32px", .h = "32px") {
+                rcIconX(16.0f, delHot ? RC_RED_600 : s.textMuted);
             }
         }
     }
@@ -117,20 +131,15 @@ static int task_card(RC_App *app, AppState *st, int i) {
     return del;
 }
 
-/* ── layout ──────────────────────────────────────────────────────────────── */
-
 static void layout(RC_App *app, void *userData) {
     AppState *st  = (AppState *)userData;
     RC_Arena *mem = rcAppArena(app);
     RC_Style  s   = rcGetStyle();
 
-    /* Load-bearing: the delete lands here, before anything is drawn - not at the
-       end of the frame that requested it. rcTextC does not copy: the card below
-       hands RayClay a pointer straight into st->tasks[i].text, and the library
-       keeps that pointer until the frame is drawn. delete_task compacts the
-       array, so compacting mid-frame would leave every retained pointer aimed one
-       slot high and the cards below the deleted one would draw the wrong text.
-       Deferring past the layout callback entirely is what makes it safe. */
+    /* The delete lands HERE, before anything is drawn. rcTextC does not copy: the
+       cards hand RayClay pointers straight into st->tasks[i].text and the library
+       keeps them until the frame is drawn, so compacting the array mid-frame would
+       aim every retained pointer one slot high. */
     if (st->pendingDelete >= 0) {
         delete_task(st, st->pendingDelete);
         st->pendingDelete = -1;
@@ -138,32 +147,37 @@ static void layout(RC_App *app, void *userData) {
 
     int del = -1;   /* set by a card this frame; applied at the top of the next */
 
-    rcColumn(.id = "Root", .w = "grow", .h = "grow", .bg = s.background) {
+    /* SAFE AREA. A phone draws edge to edge, under the status bar and the home
+       indicator. rcViewport().safe gives the margins ALREADY IN LAYOUT UNITS.
+       Spend each exactly once: top and sides to the app bar (which paints under
+       the status bar) and to the content column, the bottom to the root. */
+    RC_Insets safe = rcViewport().safe;
 
-        appbar();
+    rcColumn(.id = "Root", .bg = s.background, .pb = (uint16_t)(safe.bottom),
+             .w = "grow", .h = "grow") {
 
-        rcColumn(.w = "grow", .h = "grow", .p = 20, .gap = 16, .bg = s.background) {
+        appbar(safe);
 
-            /* ── add-task card ─────────────────────────────────────────── */
-            rcRow(.id = "addcard", .w = "grow", .align = "cl", .gap = 10,
-                   .bg = s.surface, .px = 12, .py = 8, .borderRadius = "all-lg",
-                   .shadow = { rcAlpha(RC_BLACK, 28), 0, 2, 8, 0 }) {
+        rcColumn(.bg = s.background, .gap = 16, .pt = 20, .pb = 20,
+                 .pl = (uint16_t)(20 + safe.left), .pr = (uint16_t)(20 + safe.right),
+                 .w = "grow", .h = "grow") {
+
+            rcRow(.id = "addcard", .bg = s.surface, .gap = 10, .px = 12, .py = 8,
+                  .align = "cl", .borderRadius = "all-lg", .w = "grow",
+                  .shadow = { rcAlpha(RC_BLACK, 28), 0, 2, 8, 0 }) {
                 rcBox(.w = "grow") {
                     rcTextInput("new", st->input, sizeof st->input,
                                  .placeholder = "Add a task");
                 }
-                if (rcButton("btn_add", "Add", RC_BTN_PRIMARY))
+                /* Return adds the task, keyed on the FIELD having focus rather than
+                   the window: Return while the toggle is focused belongs to it. */
+                if (rcButton("btn_add", "Add", RC_BTN_PRIMARY)
+                    || (rcIsFocused("new") && rcKeyPressed(RC_KEY_ENTER)))
                     add_task(st);
             }
 
-            /* ── status + filter row ───────────────────────────────────── */
-            /* Kept above the list so the bottom-right FAB never covers the
-               "Show completed" toggle. */
-            rcRow(.w = "grow", .align = "cl", .gap = 10) {
-                /* Deliberately NOT a frame counter. A live per-frame readout is
-                   itself an animation: the text changes every frame, so the app
-                   can never park and the on-demand idle win (1.08 -> 0.00
-                   CPU-s/min) is lost to redrawing a number nobody reads. */
+            /* Above the list, so the bottom-right FAB never covers this toggle. */
+            rcRow(.gap = 10, .align = "cl", .w = "grow") {
                 RC_String info = rcFormat(mem, "%d task%s",
                                              st->count, st->count == 1 ? "" : "s");
                 rcText(info, .font = F_SMALL, .color = s.textMuted);
@@ -172,18 +186,21 @@ static void layout(RC_App *app, void *userData) {
                 rcToggle("tg_done", &st->showDone);
             }
 
-            /* ── task list (scrollable) ────────────────────────────────── */
-            /* Counted HERE, not at the top of layout(): the "add" button above
-               runs first and can raise st->count, so a count taken before it
-               would show "All clear" on the very frame a task appeared. */
+            /* Counted HERE, not at the top of layout(): the "add" button above runs
+               first and can raise st->count. */
             int shown = 0;
             for (int i = 0; i < st->count; i++)
                 if (st->showDone || !st->tasks[i].done) shown++;
 
-            rcColumn(.id = "list", .w = "grow", .h = "grow", .scroll = "v",
-                      .gap = 10) {
+            /* THE FAB'S FOOTPRINT IS A NO-CONTENT ZONE ON BOTH AXES. The foot is
+               reserved here so the last card scrolls clear of the button; the
+               horizontal half of the reserve lives in the card's own padding, so
+               every card is clear of it at every scroll offset, not just the end.
+               The bottom safe inset is not added: the root already spends it. */
+            rcColumn(.id = "list", .gap = 10, .pb = FAB_SIZE + FAB_MARGIN,
+                     .scroll = "v", .w = "grow", .h = "grow") {
                 if (shown == 0) {
-                    rcColumn(.w = "grow", .h = "grow", .align = "cc", .gap = 6) {
+                    rcColumn(.gap = 6, .align = "cc", .w = "grow", .h = "grow") {
                         rcTextL("All clear", .font = F_TITLE, .color = s.textMuted);
                         rcTextL("Add a task above, or tap the + button.",
                                  .font = F_SMALL, .color = s.textMuted);
@@ -199,62 +216,69 @@ static void layout(RC_App *app, void *userData) {
         }
     }
 
-    /* Record it and ask for one more frame; the delete itself happens at the
-       top of that frame (see the note in layout()). Ask explicitly rather than
-       relying on anything else to wake the app: the deferral is only correct if
-       a frame actually follows, and saying so here is one line. */
+    /* The deferral is only correct if a frame actually follows, so ask for one. */
     if (del >= 0) {
         st->pendingDelete = del;
-        rcAppRequestFrame(app);
+        rcWindowRequestFrame(rcAppMainWindow(app));
     }
 
     /* Scrollbar + FAB are floating - place them OUTSIDE the root column. */
     rcScrollbar("list");
 
-    /* Floating action button: a circular pink Material FAB pinned bottom-right.
-       Clicking it moves focus to the input (or adds the task if one is typed). */
-    rcBox(.id = "fab",
-           .floating = { .to = RC_ATTACH_ROOT, .parent = RC_ANCHOR_BOTTOM_RIGHT,
-                         .element = RC_ANCHOR_BOTTOM_RIGHT, .offset = { -24, -24 } },
-           .bg = rcIsHovered("fab") ? RC_PINK_500 : RC_PINK_400,
-           .shadow = { rcAlpha(RC_BLACK, 80), 0, 4, 12, 0 },
-           .borderRadius = "all-full", .w = "56px", .h = "56px", .align = "cc") {
-        rcTextL("+", .font = F_TITLE, .color = RC_WHITE);
+    /* Floating action button, pinned FAB_MARGIN in from the SAFE edges: the root's
+       insets do not reach a float anchored to the root, so the offset adds them.
+       zIndex 2 puts it above rcScrollbar's thumb, which declares itself at z 1.
+       Clicking it focuses the input, or adds the task if one is typed. */
+    rcBox(.id = "fab", .bg = rcIsHovered("fab") ? RC_PINK_500 : RC_PINK_400,
+          .align = "cc", .borderRadius = "all-full",
+          .wType = RC_PX(FAB_SIZE), .hType = RC_PX(FAB_SIZE),
+          .shadow = { rcAlpha(RC_BLACK, 60), 0, 6, 10, 0 },
+          .floating = { .to = RC_ATTACH_ROOT, .parent = RC_ANCHOR_BOTTOM_RIGHT,
+                         .element = RC_ANCHOR_BOTTOM_RIGHT,
+                         .offset = { -(FAB_MARGIN + safe.right),
+                                     -(FAB_MARGIN + safe.bottom) },
+                         .zIndex = 2 }) {
+        rcIconPlus(24.0f, RC_WHITE);   /* Material's 24 dp icon, not a text glyph */
     }
     if (rcClicked("fab")) {
         if (st->input[0]) {
             add_task(st);
-            /* The FAB sits OUTSIDE the root column, so this click is read after
-               the list was built: the new task belongs to the next frame, and on
-               demand that frame has to be asked for. */
-            rcAppRequestFrame(app);
+            /* Read after the list was built, so the new task belongs to the next
+               frame - and on demand that frame has to be asked for. */
+            rcWindowRequestFrame(rcAppMainWindow(app));
         } else {
             rcSetFocus("new");
         }
     }
 }
 
-/* ── app callbacks ───────────────────────────────────────────────────────── */
-
-/* No updateCallback: nothing here changes except in response to input, so the runner
-   parks in the OS event loop at ~0 CPU between clicks. That is the default
-   and the right shape for an ordinary UI - see ex03/ex10 for apps that DO need
-   to ask for frames, and ex12 for the one that needs every frame. */
-
-/* ── entry point ─────────────────────────────────────────────────────────── */
+/* No updateCallback: nothing here changes except in response to input, so the
+   runner parks in the OS event loop at ~0 CPU between clicks. */
 
 int main(void) {
+    /* Enough rows that the list reads like a list, two of them already done so
+       the "Show completed" toggle has something to hide. */
     static const char *const starters[] = {
         "Ship the Material tasks example",
         "Bake the font at runtime (zero-asset)",
         "Try the pink action button",
+        "Draft the release notes",
+        "Review the layout pass on a phone viewport",
+        "Reply to the design feedback thread",
+        "Book the venue for the team offsite",
+        "Renew the signing certificate",
+        "Water the office plant",
     };
+    enum { STARTER_COUNT = (int)(sizeof starters / sizeof starters[0]) };
 
     static AppState state = { .showDone = true, .pendingDelete = -1 };
-    state.count = 3;
-    for (int i = 0; i < 3; i++)
+
+    /* Derived from the array and clamped to the buffer - never a second literal. */
+    state.count = STARTER_COUNT < MAX_TASKS ? STARTER_COUNT : MAX_TASKS;
+    for (int i = 0; i < state.count; i++)
         rcStrCopy(state.tasks[i].text, starters[i], sizeof state.tasks[0].text);
-    state.tasks[1].done = true;   /* seed one completed task */
+    state.tasks[1].done = true;
+    state.tasks[5].done = true;
 
     static const float fontSizes[F_COUNT] = {
         [F_SMALL] = 13.0f,
@@ -262,7 +286,7 @@ int main(void) {
         [F_TITLE] = 20.0f,
     };
 
-    /* Light Material palette: gray canvas, white cards, indigo chrome/accent. */
+    /* Light Material palette: grey canvas, white cards, indigo chrome/accent. */
     RC_Style st = rcStyleLight();
     st.background = RC_GRAY_100;
     st.surface    = RC_WHITE;
@@ -277,15 +301,14 @@ int main(void) {
         .width             = 720,
         .height            = 620,
         .title             = "Tasks - RayClay",
-        .clearColor        = RC_GRAY_100,
         .fontSizes         = fontSizes,
         .fontCount         = F_COUNT,
+        .scratchArenaBytes = 4096,
         .nativeFrame       = true,
         .titlebarHeight    = 56,
-        .titlebar          = { .custom = true },   /* the Material app bar IS the titlebar */
-        .layoutCallback          = layout,
+        .layoutCallback    = layout,
         .userData          = &state,
-        .scratchArenaBytes = 4096,
+        .titlebar          = { .custom = true },   /* the Material app bar IS the titlebar */
     };
     return rcRunApp(&opts);
 }

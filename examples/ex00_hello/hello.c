@@ -1,34 +1,17 @@
 /*
-================================================================================
-    hello.c - the smallest RayClay program (start here)
-================================================================================
+    hello.c - the smallest RayClay program. Start here.
 
-    Two lines open a cross-platform window showing the built-in welcome canvas.
-    The SAME source builds and runs unchanged on every desktop OS and compiles
-    to the web (cmake --preset web).
+    rcRunApp is the entry point every RayClay app uses, and this is it with
+    nothing configured: NULL asks for every default and opens a window on the
+    built-in welcome canvas. To make it yours, fill an RC_AppOptions (see
+    rayclay.h) and pass that instead - never something else.
 
-    rcRunApp IS THE ENTRY POINT EVERY APP USES, and this is it with nothing
-    configured yet. Passing NULL asks for every default; you make it yours by
-    passing options instead, never by calling something else:
+    The same source runs on every desktop and compiles to the web
+    (cmake --preset web). Containing none of your code, it is also the fastest
+    way to tell a broken toolchain from a broken layout.
 
-        static void layout(RC_App *app, void *userData) { ... }
-
-        RC_AppOptions opts = {
-            .width = 900, .height = 600, .title = "My App",
-            .layoutCallback    = layout,
-            .scratchArenaBytes = 4096,   // needed by rcFormat
-        };
-        return rcRunApp(&opts);
-
-    Because this program contains none of YOUR code, it is also the fastest way
-    to tell a broken toolchain from a broken layout: if this window does not
-    appear, the problem is the compiler, linker, GPU driver or emsdk.
-
-    From here, ex01..ex05 walk one GUI per decade (1980s -> 2020s), each a little
-    richer than the last; ex10 is the full widgets gallery.
-
+    Next: ex01 onward, one GUI per decade; ex10 is the full widget gallery.
     Build target: rayclay_ex00_hello
-================================================================================
 */
 #include "rayclay.h"
 

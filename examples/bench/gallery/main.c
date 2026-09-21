@@ -1,25 +1,16 @@
 /*
-================================================================================
-    main.c - RayClay `gallery`: the demo runner (showcase mode)
-================================================================================
+    main.c - RayClay Gallery: the demo runner.
 
-    The thin desktop/web entry point for the gallery benchmark/showcase app. It is
-    the ONLY translation unit that touches the RC_ runner (RC_App*): it opens a real
-    window with real clock + input, seeds the app once (lazily, so the renderer +
-    GL are up before rcLoadImageFromMemory uploads the textures), and drives the
-    SAME pure core (gallery_update / gallery_layout) the benchmark harness drives -
-    only the clock/seed/input source differs (see gallery_app.h). The demo adds a
-    floating perf HUD via gallery_demo_chrome; the bench never runs it.
+    The only translation unit that touches RC_App. It opens a window with a real
+    clock and real input, seeds the app once the renderer is up (the textures
+    upload there), and drives the same core (gallery_update / gallery_layout) a
+    scripted run drives.
 
-    Same source -> native desktop window AND web (cmake --preset web). Zero-asset:
-    the 12 "photos" are procedurally generated as in-memory BMPs (no files to ship).
-    Headless smoke: RAYCLAY_MAX_FRAMES=N -> opens, draws N frames, exits 0.
+    One source builds the native window and the web canvas (cmake --preset web).
+    Zero-asset: the twelve photos are generated in memory, no files to ship.
+    Headless smoke: RAYCLAY_MAX_FRAMES=N draws N frames and exits 0.
 
-    App #5 of the standardised production benchmark/showcase apps
-    (messenger -> notes -> trader -> platformer -> gallery -> opsdash).
-
-    Build target: rayclay_bench_gallery
-================================================================================
+    Build: cmake --build build --target rayclay_bench_gallery
 */
 #include "gallery_app.h"
 
@@ -31,11 +22,18 @@ static void demo_update(RC_App *app, void *userData) {
     gallery_update(st, &ctx);
 }
 
+
 static void demo_layout(RC_App *app, void *userData) {
     AppState *st = (AppState *)userData;
     AppCtx ctx = app_demo_ctx(app);
     gallery_layout(st, &ctx);
     gallery_demo_chrome(st, &ctx);
+
+    /* The window's clear colour is a snapshot taken at create, not a live link
+       to the style, so push it every frame or the old ground shows wherever
+       the layout does not cover the window - the edge during a live resize.
+       The call is change-gated inside the library, so this costs nothing. */
+    rcWindowSetClearColor(rcAppMainWindow(app), rcGetStyle().background);
 }
 
 int main(void) {
@@ -49,7 +47,9 @@ int main(void) {
         [F_HERO]  = 56.0f,
     };
 
-    rcSetStyle(rcStyleDark());
+    /* The app's own neutral theme, installed before the window opens so the
+       clear colour behind the first frame is the wall the photos hang on. */
+    rcSetStyle(gallery_style(true));
 
     RC_AppOptions opts = {
         .width               = 1280,
@@ -62,20 +62,13 @@ int main(void) {
         .startLayoutElements = 4096,      /* the thumbnail grid + detail pane + modal */
         .nativeFrame         = true,
         .titlebarHeight      = 52,
-        .titlebar            = { .custom = true },   /* the topbar IS the titlebar */
-        .updateCallback            = demo_update,
-        .layoutCallback            = demo_layout,
+        .updateCallback      = demo_update,
+        .layoutCallback      = demo_layout,
         .userData            = &state,
-        /* This app's own scene is static, but its demo HUD prints a live fps
-           readout - and a per-frame readout IS an animation: the text changes
-           every frame, so the picture never settles and the app can never park.
-           A benchmark HUD that reports 1 fps because it parked would be worse
-           than useless, so the demo runner draws continuously.
-           The lesson for a real app is the opposite one: do not put a live fps
-           or frame counter in your UI unless you mean to pay for it. An
-           ordinary app stays on demand and parks at ~0 CPU (see ex04).
-           Only the DEMO runner is affected; the headless bench harness injects
-           a fixed dt and never calls rcRunApp. */
+        .titlebar            = { .custom = true },   /* the topbar IS the titlebar */
+        /* The live fps readout in the demo HUD is an animation - the text moves
+           every frame - so this runner cannot park. Do not copy that into a
+           real app: stay on demand and it idles at ~0 CPU (ex04). */
         .renderMode          = RC_RENDER_CONTINUOUS,
     };
 

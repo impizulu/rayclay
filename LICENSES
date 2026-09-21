@@ -6,16 +6,19 @@ This file collects, verbatim, every licence and copyright notice that applies
 to the RAYCLAY SOURCE DISTRIBUTION - rayclay.h and the vendored source that
 builds with it.
 
-It is deliberately NOT a manifest for the whole repository.  Assets under
-examples/ carry their own licence beside them - examples/assets/fonts/ ships an
-OFL text next to each typeface, examples/assets/icons/ ships its own notice -
-and those are authoritative for that content.  Collecting them here as well
-would put one asset's terms in two places and let the copies drift.
+It is deliberately NOT a manifest for the whole repository.  On the examples
+branch, assets under examples/ carry their own licence beside them -
+examples/assets/fonts/ ships an OFL text next to each typeface, and
+examples/assets/icons/ ships its own notice - and those are authoritative for
+that content.  Collecting them here as well would put one asset's terms in two
+places and let the copies drift.  The main branch carries no examples/
+directory, so on main there is nothing those notices govern and this file
+covers everything shipped.
 
 rayclay.h is an amalgamated single header whose source comments are stripped.
 The components marked "Embedded in rayclay.h" below are compiled into it, and
 their notices are carried both here and in the banner at the top of rayclay.h.
-The vendored glfw/ directory ships as separate source and is not embedded in
+The vendored glfw/ and SDL3/ directories ship as separate source, not embedded in
 the header.
 
 Nothing below modifies any licence: each section reproduces its component's
@@ -55,11 +58,11 @@ SOFTWARE.
 Clay (RayClay fork) — Zlib
 ==============================================================================
 
-(Altered fork of Clay, embedded in rayclay.h; docs it cites live in the RayClay dev repo.)
+(Altered fork of Clay, embedded in rayclay.h; the notice below is the plain marking zlib condition 2 requires.)
 
 # Licence — Clay (RayClay fork)
 
-This directory contains a **modified fork** of Clay
+RayClay contains a **modified fork** of Clay
 ([github.com/nicbarker/clay](https://github.com/nicbarker/clay)).
 
 Clay is licensed under the **zlib/libpng licence**, and this fork is distributed
@@ -108,12 +111,11 @@ Modifications made to Clay for RayClay are released under the **same zlib/libpng
 licence terms as the original**, reproduced above. They are not separately or more
 restrictively licensed.
 
-**This is not the original Clay.** `clay.h` in this directory has been altered and
-carries a banner at the top of the file saying so. Every divergence from upstream is
-listed, dated, and attributed to a commit in the adjacent `CHANGELOG.md`. Do not
-report bugs found in this fork to the upstream Clay project, and do not treat this
-file as authoritative for upstream behaviour — see `README.md` for the exact
-provenance and the diff command that shows the current divergence.
+**This is not the original Clay.** The Clay sources have been altered, and they are
+amalgamated into `rayclay.h` rather than shipped as a separate `clay.h`. This notice
+is the plain marking that condition 2 requires: treat every line of Clay you find in
+`rayclay.h` as altered. Report bugs found here to RayClay, not to the upstream Clay
+project, and do not treat this copy as authoritative for upstream Clay's behaviour.
 
 Clay was created by Nic Barker; the design, the API, and the overwhelming majority of
 the implementation are upstream's work. This fork's changes are surgical: correctness
@@ -455,6 +457,31 @@ freely, subject to the following restrictions:
 
 3. This notice may not be removed or altered from any source
    distribution.
+
+
+==============================================================================
+SDL3 — Zlib
+==============================================================================
+
+(Ships as separate source in SDL3/ (upstream 3.4.16, unaltered); not in rayclay.h.)
+
+Copyright (C) 1997-2026 Sam Lantinga <slouken@libsdl.org>
+  
+This software is provided 'as-is', without any express or implied
+warranty.  In no event will the authors be held liable for any damages
+arising from the use of this software.
+
+Permission is granted to anyone to use this software for any purpose,
+including commercial applications, and to alter it and redistribute it
+freely, subject to the following restrictions:
+  
+1. The origin of this software must not be misrepresented; you must not
+   claim that you wrote the original software. If you use this software
+   in a product, an acknowledgment in the product documentation would be
+   appreciated but is not required. 
+2. Altered source versions must be plainly marked as such, and must not be
+   misrepresented as being the original software.
+3. This notice may not be removed or altered from any source distribution.
 
 
 ==============================================================================

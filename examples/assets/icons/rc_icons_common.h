@@ -25,8 +25,13 @@ typedef struct RC_IconPoint {
     float y;
 } RC_IconPoint;
 
+/* Written as !(size >= 1.0f), not (size < 1.0f): NaN compares false either
+   way, and the plain form handed it straight through to CLAY_SIZING_FIXED. A NaN
+   that reaches here lands on the floor. Finiteness itself is refused before the
+   clamp, in the library (rci_core_icon_size_usable), because this header
+   compiles inside app TUs and cannot pull in <math.h>. */
 static inline float RCI_IconClampSize(float size) {
-    return size < 1.0f ? 1.0f : size;
+    return !(size >= 1.0f) ? 1.0f : size;
 }
 
 /* Max points in one procedural-icon stroke path: a fixed cap so a draw needs no
@@ -123,9 +128,12 @@ void rcIconDrawRoundedRectStroke(RC_BoundingBox bounds,
     #define RC_ICON_POOL_CAPACITY 256
 #endif
 
-/* Both live in the library (rc_api.c). Declared here rather than via
-   rc_internal.h: this header also compiles inside app TUs (C and C++), where
-   the internal header is unavailable. */
+/* All three live in the library (the first two in rc_api.c, the size gate in
+   rc_core.c beside rcUnzoomedScale, so every closure that links this header's
+   other seams has it). Declared here rather than via rc_internal.h: this header
+   also compiles inside app TUs (C and C++), where the internal header is
+   unavailable. rci_core_icon_size_usable is false for a NaN or inf size: it has
+   warned once per process and the icon must not be declared. */
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -133,6 +141,7 @@ unsigned int       rci_api_icon_frame_stamp_get(void);
 RC_CustomDrawData *rci_api_icon_next_draw_data(RC_CustomDrawCallback draw,
                                                RC_Color color,
                                                const void *userData);
+bool               rci_core_icon_size_usable(float size);
 #ifdef __cplusplus
 }
 #endif
@@ -161,7 +170,7 @@ static inline void rcIconEmit(float size,
                                 RC_Color color,
                                 RC_CustomDrawCallback draw,
                                 const void *userData) {
-    /* UNZOOMED SCOPE (#423): an icon box is an absolute px square, so inside a
+    /* UNZOOMED SCOPE: an icon box is an absolute px square, so inside a
        scope held at constant physical size it must counter-scale like every
        other pixel quantity - otherwise a chip stops growing and its glyph does
        not, and the glyph overflows the chip. Exactly 1.0 outside a scope, so
@@ -169,6 +178,16 @@ static inline void rcIconEmit(float size,
        WARN: before the clamp, never after. The clamp defines the legal drawn size,
        so clamping first would let the scale carry the result back out of range. */
     size *= rcUnzoomedScale();
+    /* Refused, not clamped. The old `size < 1.0f` floor let NaN and inf through
+       to CLAY_SIZING_FIXED; measured on this tree's Clay (which collapses a
+       non-finite FIXED axis to 0, test_clay_sizing_nonfinite) that was a 0x0
+       icon and nothing in the log - one `width / count` with count == 0 read
+       as a broken SVG. Same rule as RC_PX (rci_core_sizing_from_typed): warn
+       once, declare nothing. Tested AFTER the scale so a product that
+       overflowed there is caught too. */
+    if (!rci_core_icon_size_usable(size)) {
+        return;
+    }
     size = RCI_IconClampSize(size);
     RC_CustomDrawData *drawData = RCI_IconNextDrawData(draw, color, userData);
 

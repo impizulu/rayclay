@@ -123,16 +123,17 @@
       }, false);
 
       // On the web the BROWSER owns zoom (the native Ctrl+wheel zoom is compiled
-      // out), but emscripten's GLFW shim preventDefault()s every canvas wheel
-      // event - including Ctrl+wheel and trackpad pinch (which arrives as a
-      // ctrlKey wheel) - so that gesture would zoom NOTHING (empirically
-      // confirmed via a trusted-input probe). The shim registers CAPTURE-phase
-      // listeners, and capture listeners at the target fire before non-capture
-      // ones regardless of registration order - so this exemption must also be
-      // capture-phase; registered at parse time (before the shim attaches at
-      // runtime init) it then runs first and stopImmediatePropagation() keeps
-      // ctrl-wheels away from the shim: the browser's page zoom engages and the
-      // app never sees a zoom wheel. 'mousewheel' covers the shim's legacy
+      // out), but the window host's canvas wheel listener preventDefault()s
+      // every wheel it accepts - SDL3's emscripten port returns "handled"
+      // whenever mouse-wheel events are enabled, exactly as the GLFW shim did -
+      // including Ctrl+wheel and trackpad pinch (which arrives as a ctrlKey
+      // wheel), so that gesture would zoom NOTHING (confirmed on the shim via a
+      // trusted-input probe; SDL registers its listener bubble-phase at runtime
+      // init). Capture listeners at the target fire before non-capture ones
+      // regardless of registration order, so this exemption is capture-phase and
+      // registered at parse time: it runs first and stopImmediatePropagation()
+      // keeps ctrl-wheels away from the host - the browser's page zoom engages
+      // and the app never sees a zoom wheel. 'mousewheel' covers the legacy
       // registration on engines that still deliver it.
       function rcExemptZoomWheel(e) {
         if (e.ctrlKey) e.stopImmediatePropagation();
@@ -142,13 +143,13 @@
       Module.canvas.addEventListener('mousewheel', rcExemptZoomWheel,
                                      { passive: true, capture: true });
 
-      // The canvas fills the viewport via CSS (above). Sizing is driven from C:
-      // RayClay registers a window-resize callback that reads this CSS box and
-      // pushes it into GLFW; the C side then sizes the drawing buffer to
-      // CSS px x devicePixelRatio (device-pixel crisp on HiDPI and page zoom,
-      // re-applied on DPR change), so the layout re-flows when the window or
-      // device scale changes. Keep the canvas stretched to the page even if
-      // the GL backend pins an inline size.
+      // The canvas fills the viewport via CSS (above). Sizing is the window
+      // host's: SDL3's emscripten port reads this CSS box at create and on every
+      // window resize, and sizes the drawing buffer to CSS px x
+      // devicePixelRatio (device-pixel crisp on HiDPI and page zoom, re-read on
+      // DPR change), so the layout re-flows when the window or device scale
+      // changes. Keep the canvas stretched to the page even if the GL backend
+      // pins an inline size.
       window.addEventListener('resize', function () {
         Module.canvas.style.width = '100vw';
         Module.canvas.style.height = '100vh';

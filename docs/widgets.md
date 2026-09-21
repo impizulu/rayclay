@@ -1,8 +1,9 @@
 # Interactive widgets: patterns and recipes
 
-> Companion to the [cheatsheet](cheatsheet.md). Covers the stateful widgets:
-> text fields and text areas, menus, context menus, split panes, and modal
-> dialogs, that need more explanation than a one-line signature provides.
+> Companion to the [cheatsheet](cheatsheet.md). Covers the parts that need more
+> explanation than a one-line signature provides: cursors, buttons, keyboard
+> shortcuts, text fields and text areas, menus, context menus, modal dialogs,
+> charts, scrolling, tables and titlebars.
 >
 > Every widget here is **input-driven**, so it works under RayClay's default
 > on-demand rendering with no extra code. If a widget's data changes on its own
@@ -15,8 +16,9 @@
 ## Cursors: you almost never set them
 
 RayClay picks the expected cursor per component out of the box: a button gets the pointer, a draggable
-gets grab/grabbing, a text field gets the I-beam. **`rcClicked(id)` (or `rcPressed(id)`) extends that
-to your own elements:**
+gets grab/grabbing, and a text field gets the I-beam - **as does any ordinary selectable text**, which
+is every label, heading and table cell unless you opt it out with `.select`. **`rcClicked(id)` (or
+`rcPressed(id)`) extends that to your own elements:**
 polling it gives the element the web's clickable-hand, so while the pointer is over it the frame's cursor
 defaults to `RC_CURSOR_POINTER`. Any styled `rcBox` you turn into a button therefore behaves like one
 without a line of cursor code:
@@ -26,21 +28,60 @@ rcBox(.id = "card", .bg = s.surface, .p = 12) { rcTextL("Open"); }
 if (rcClicked("card")) open_thing();          /* hovering it already shows the hand */
 ```
 
+**Selectable text inside a clickable box shows the hand, not the I-beam** - the same precedence a
+browser applies, so a card with a caption in it reads as one clickable thing rather than two. Chrome
+never offers the I-beam at all: a button label, a menu item, a tab and the title-bar title are
+unselectable, so the question never arises for them.
+
+**The one deliberate exception is the window controls.** `rcWindowControls` and
+`rcWindowControlButton` keep the plain arrow while hovered, because that is what every desktop app
+with a drawn title bar does and a hand over a close box reads as a web page rather than a window.
+If you build your own title-bar control out of `rcBox` plus `rcClicked`, you get the hand - use
+`rcSetCursor(RC_CURSOR_DEFAULT)` on hover to match the built-in controls.
+
 Two escape hatches, for the cases where the default is wrong:
 
 ```c
-/* 1. Per element: a clickable surface that should NOT look like a button:
-      a click-to-dismiss backdrop, a whole-row hit target. An explicit set always wins. */
+/* 1. A clickable surface that should NOT look like a button - a click-to-dismiss
+      backdrop. It covers the whole window and has nothing inside it, so an
+      ungated set is right: there is nothing else the cursor could belong to. */
 if (rcClicked("backdrop")) close_popup();
 rcSetCursor(RC_CURSOR_DEFAULT);               /* AFTER the poll */
 
-/* 2. App-wide: take over cursors entirely. rcSetCursor still works. */
+/* 2. A whole-row hit target, which is the SAME call and needs a guard. Polling a
+      ROW hands its entire subtree the hand, so an ungated set here flattens the
+      cursor over every control inside the row as well. Name what you are
+      correcting. */
+if (rcClicked(rowId)) rcSetFocus(fieldId);
+if (rcIsHovered(fieldId)) rcSetCursor(RC_CURSOR_TEXT);   /* the field, not the row */
+
+/* 3. App-wide: take over cursors entirely. rcSetCursor still works. */
 RC_AppOptions opts = { .autoCursorsDisabled = true, /* ... */ };
 ```
 
 `rcSetCursor` is last-writer-wins for the frame, which is why the override goes *after* the poll.
+**And "the frame" is why case 2 needs the guard.** There is one cursor value per frame, and a
+hovered element's ancestors count as hovered, so a poll on a container is a write on behalf of
+everything under it. Gate the correction on the element you actually mean.
 Cursor state never reaches the draw stream, so adding or removing these calls cannot change a rendered
 frame, only what the pointer looks like.
+
+**The one shape that gets no hand, and it is easy to write by accident.** The hand comes from *polling*,
+not from being clickable, so an element that decides a click some other way has told the library nothing:
+
+```c
+bool hot = rcIsHovered("th_cpu");
+rcRow(.id = "th_cpu", .bg = hot ? tint : base) { rcTextL("CPU"); }
+if (hot && rcPointerPressed(RC_POINTER_LEFT)) sort_by(CPU);   /* arrow, not hand */
+```
+
+Prefer `rcClicked` here: it gives you the hand, and it also lets the user press, slide off and release to
+cancel, which a press-edge read cannot. Where the raw edge is genuinely what you want, name the cursor
+yourself before the element:
+
+```c
+if (hot) rcSetCursor(RC_CURSOR_POINTER);
+```
 
 ---
 
@@ -74,6 +115,56 @@ would build any other custom button.
 > about **grabbing**, not about activating, and it is why the release-edge rule above is stated for
 > things that *activate*.
 
+### `rcButton` takes options after the variant
+
+The three-argument call is the whole of the API you need most days:
+
+```c
+if (rcButton("save", "Save", RC_BTN_PRIMARY))
+    save();
+```
+
+Anything further is **appended after the variant, as named fields** - the `RC_ButtonOptions` struct,
+the same flat-options shape as `rcTextL` and `rcTextInput`:
+
+```c
+RC_Style s = rcGetStyle();
+rcButton("save", "Save", RC_BTN_PRIMARY, .color = s.text);
+```
+
+- **`.color`** sets the **label** colour, not the fill. The fill stays the variant's, so hover and
+  pressed shades keep working. Leaving it unset (the default) keeps each variant's own label colour:
+  white on `RC_BTN_PRIMARY` and `RC_BTN_DANGER`, `s.text` on `RC_BTN_DEFAULT` and `RC_BTN_GHOST`.
+  **This is the field to reach for when your accent is light** - a white label on a light `primary`
+  is the one contrast failure the bundled button can produce on its own.
+- **`.select`** decides whether the label can be selected and copied. A button is chrome, so it
+  defaults to unselectable; pass `RC_SELECT_TEXT`, a bare `true`, or `rcSelectable(true)` when you
+  have a bool, if the label is a value the reader may want to take with them. **A bare `true` is
+  `RC_SELECT_TEXT`**: the enum is ordered so that the spelling you reach for first is the one that
+  reads correctly. A bare `false` means "this widget's default", which on a button is unselectable;
+  to force a *text run* off, name `RC_SELECT_NONE` or `rcSelectable(false)`.
+
+Three rules, all of which exist because of C++ rather than C:
+
+- **A struct argument is spelled `RC_LIT(T){ ... }`, never `(T){ ... }`.** A compound literal is
+  `(T){...}` in C and `T{...}` in C++, so neither bare spelling compiles in both languages;
+  `RC_LIT` picks the right one and every sample on this page uses it. **Your compiler will probably
+  not warn you about the bare C spelling**, because `g++` and `clang++` both accept it in C++ as an
+  extension - it is a strict-ISO C++ compiler that refuses it, which may not be the one you build
+  with. `RC_LIT` works for any type, including the `Clay_` types RayClay re-exports.
+  [getting-started.md](getting-started.md) keeps the two raw spellings side by side if you want to
+  see what the macro is choosing between.
+- **Options are always `.field = value`**, never positional. C99 would take a mixed list; C++20
+  rejects one outright.
+- **Do not write `.variant =` yourself.** The macro already emits it from the third argument. A
+  second one is a duplicate designator: `g++` refuses it, `clang++` warns and takes the later value,
+  and C99 takes the later value in silence - so it is a portability defect one of your compilers
+  will not show you.
+
+`rcButton` is a variadic macro over an internal function, exactly like `rcTextInput`. The one thing
+that costs you is that **you cannot take its address**; if you need a function pointer to a button,
+you are building your own from `rcBox` + `rcClicked` anyway.
+
 ---
 
 ## Keyboard: shortcuts and held keys
@@ -90,11 +181,11 @@ Poll key and modifier state directly; there is no event handler to register. Eve
   it is **Cmd on a macOS desktop build and Ctrl everywhere else**, so one line lands on the right key
   without a per-platform branch (and Windows AltGr, which presents as Ctrl+Alt, can never fire it). Use
   `RC_MOD_SHIFT` / `RC_MOD_ALT` / `RC_MOD_CTRL` / `RC_MOD_SUPER` when you need a specific physical modifier.
-  > **On the web, `RC_MOD_PRIMARY` is Ctrl, even in a browser on a Mac.** The choice is made at *compile*
-  > time (`__APPLE__`), and the web build is compiled by emscripten, which does not define it. So a Mac user
-  > running your **desktop** build presses Cmd+S, while the same source served as a **web page** wants Ctrl+S.
-  > If that matters to your app, say so in your UI hint rather than assuming Cmd; a runtime user-agent split
-  > is not in v1.0.
+  > **On the web it accepts EITHER Cmd or Ctrl**, and that is not a compromise - it is the only correct
+  > answer there. A desktop build knows its OS at compile time; one web build serves every visitor, so
+  > the platform is a property of the VISITOR, not of the binary. A macOS visitor presses Cmd+S and it
+  > works, a Windows or Linux visitor presses Ctrl+S and it works, and AltGr still cannot fire it. Your
+  > UI hint is the one thing that cannot be both - pick by audience, or say "Cmd/Ctrl".
 
 Keys are named with the backend-neutral `RC_Key` enum (`RC_KEY_W`, `RC_KEY_SPACE`, `RC_KEY_LEFT`, …);
 never hardcode an integer: the value is only meaningful within a single build.
@@ -129,8 +220,8 @@ static void update(RC_App *app, void *user) {
 }
 ```
 
-**A cross-platform save shortcut**: Cmd+S on a macOS desktop build, Ctrl+S everywhere else (including a
-browser on a Mac; see the note above), in one line:
+**A cross-platform save shortcut**: Cmd+S on a macOS desktop build, Ctrl+S on the other desktops, and
+either one on the web (see the note above), in one line:
 
 ```c
 if (rcModDown(RC_MOD_PRIMARY) && rcKeyPressed(RC_KEY_S))
@@ -141,6 +232,17 @@ if (rcModDown(RC_MOD_PRIMARY) && rcKeyPressed(RC_KEY_S))
 bare single-key shortcut (a lone `RC_KEY_S`, arrow-key movement) can clash with typing. Gate those on
 `!rcIsFocused("your_field")`; a shortcut that also holds `RC_MOD_PRIMARY` is normally safe to leave
 ungated.
+
+**TWO PRIMARY-MODIFIER CHORDS ARE ALREADY TAKEN, AND THE LIBRARY DOES NOT CONSUME THEM.**
+`RC_MOD_PRIMARY` + `A` selects every selectable run in the window, and `RC_MOD_PRIMARY` + `C` copies a
+live selection. `rcKeyPressed` is a latched-state query, not a consuming read, so one keystroke fires
+BOTH the library's verb and your handler: bind primary+A for "select all rows" and the selection band
+paints across every label, heading and table cell at the same moment your handler runs. Pick another
+letter, or gate yours on `!rcHasSelection()` where that makes sense. Inside a focused text field the
+two chords keep their field-local meaning, so the clash is a window-scope one.
+
+A `primary + Alt + key` accelerator never fires, because AltGr arrives as Ctrl+Alt and must type a
+character rather than trigger a shortcut. Use `RC_MOD_CTRL` if you want physical Ctrl+Alt.
 
 ---
 
@@ -170,8 +272,29 @@ rcTextArea ("bio",  bio,  sizeof bio,  .rows = 6);
   memory-safe but a backspace can split a character. That, not the rendering, is the
   reason to keep an *editable* buffer plain ASCII.
 - Click to focus; click elsewhere or press **Esc** to blur. Only the one focused
-  field holds edit state. `rcIsFocused(id)` / `rcSetFocus(id)` read and move focus
-  (call `rcSetFocus` on an event, not every frame; a NULL/empty id clears focus).
+  field holds edit state.
+- **A FINGER IS NOT A MOUSE HERE, AND THE DIFFERENCE IS DELIBERATE.** On a coarse pointer the
+  field is entered on the **release**, and only if the finger stayed on the same field and
+  travelled less than the scroll slop. A drag across a form therefore enters nothing and scrolls,
+  and a scroll that merely begins on a field does not raise the keyboard. Past the slop the tap is
+  spent for good, so coming back inside does not resurrect it. **There is no drag-select with a
+  finger** - the selection grab is never armed on a coarse pointer. Blur is the **press** edge on
+  every pointer, so a scroll starting outside a focused field dismisses it at once rather than
+  holding the keyboard up for the whole gesture.
+- **This is the FIELD's gesture, and selectable static text has a different one.** A finger on
+  static text arms a candidate and needs a **long press** to begin a selection, which a field never
+  offers. Both refuse a coarse drag, but neither one's behaviour tells you the other's. See
+  [api-notes.md](api-notes.md) under `rcCopySelection`. Fine pointers behave exactly as
+  the line above says. `rcIsFocused(id)` / `rcSetFocus(id)` read and move focus
+  (a NULL/empty id clears focus). Calling `rcSetFocus` with the id that is **already** focused
+  is a no-op, so a per-frame call is safe; a call that **changes** the focused id arms the editor
+  fresh and clears that field's caret, selection and undo history, so never drive it from a value
+  that flips between two ids while the user is typing.
+- A **double click** selects the word under the caret, a **triple click** the line.
+  The gesture counts only *consecutive* clicks in the same field, within 400 ms and
+  4 px of each other; a primary press anywhere else (a button, a modal's own control, empty
+  space), an explicit blur or the window losing focus ends it, so the next click in
+  the field is a single click again.
 - The caret blinks while focused and **settles to a steady on after 10 s without
   interaction**, resuming on the next keystroke or click. This is GTK's long-standing
   `gtk-cursor-blink-timeout` rule at the same default, and it is what lets an app with a
@@ -181,7 +304,10 @@ rcTextArea ("bio",  bio,  sizeof bio,  .rows = 6);
 **Text areas (`rcTextArea`) specifically:**
 - **Enter** (and numpad Enter) inserts a newline; long lines **soft-wrap** at the box
   width; **Up/Down** move the caret by row; the view scrolls vertically to keep the
-  caret visible. `.rows` sets the visible height (default 4).
+  caret visible. `.rows` sets the visible height (default 4), and **it is the only way to size a
+  text area**: the box is `rows * font + 12 px` of padding, so `.h = "grow"` on the surrounding
+  element does not stretch the editor. To fill a pane, compute the row count from the height you
+  have rather than asking the editor to grow.
 - v1 limits: a **paste is capped at 1024 bytes** (the truncation warns once); **tabs
   are unsupported** (Tab is inert, pasted tabs are dropped); there is **no mouse-wheel
   scroll yet** (the view follows the caret only); an **unfocused text area shows from
@@ -194,8 +320,11 @@ rcTextArea ("bio",  bio,  sizeof bio,  .rows = 6);
     normalise your seed text to `\n` yourself before the first frame, or ignore the
     first-frame edge; the buffer is settled from frame two on.
 
-**C++ callers:** the `...` designated-initialiser form is C99; from C++ call
-`rcTextInputEx(id, buf, cap, opts)` with the option fields in declaration order.
+**C++ callers:** build at C++20 and write the option designators in declaration order
+(`.placeholder`, `.font`, `.password`, `.rows`). The macro form works: it appends `.multiline`
+after your own designators, so they stay in declaration order, which is what C++20 requires and C99
+does not care about. There is no second, non-macro spelling to fall back to, and you do not need
+one: every call the options struct can express, the macro can spell.
 
 ---
 
@@ -220,10 +349,18 @@ if (rcBeginMenu("file_menu", "File")) {
 - The `id` must be unique across every menu in the layout. The `label` is
   the button text shown in the toolbar.
 - String literals work for both; they must outlive the frame.
-- **A menu is floating, and a floating element does not inherit its target's clipping.** Open one inside a
-  scroll panel and it draws *over* whatever lies outside that panel, and keeps drawing there as the panel
-  scrolls. That is deliberate (escaping the container is the whole point of a menu), but there is no
-  per-element opt-out, so if you need something clipped, do not float it.
+- **A menu is floating, and a floating element escapes its target's clipping by default.** Open one
+  inside a scroll panel and it draws *over* whatever lies outside that panel, and keeps drawing there
+  as the panel scrolls. That is deliberate: escaping the container is the whole point of a menu, and
+  `rcBeginMenu` exposes no way to change it. A floating element **of your own** can opt back in:
+  `.floating = { ..., .clip = RC_CLIP_TO_PARENT }` cuts it by the same rectangle that cuts its
+  target, which is what a caption pinned inside a scrolling card wants.
+- **A menu's title and its dropdown share one style, and nothing can split them.** `rcBeginMenu`
+  takes an `id` and a `label` and no options block, so it has nowhere to carry a `.className`, and
+  both halves are declared inside the one call. To style a title apart from the panel it opens,
+  compose the pair yourself: an `rcButton` - which *does* take per-call options - plus a column with
+  `.floating = { .to = RC_ATTACH_ELEMENT, .toId = "<that button's id>", .capture = RC_CAPTURE_ON }`.
+  You choose both styles and keep the anchoring.
 
 ### Menu bar pattern
 
@@ -316,7 +453,7 @@ if (rcButton("show_dlg", "Delete item", RC_BTN_DANGER))
 
 /* The modal itself: emit the body only while open. */
 if (rcBeginModal("dlg_confirm", &open)) {
-    rcColumn(.bg = s.surface, .p = 24, .gap = 16, .borderRadius = "all-xl") {
+    rcColumn(.bg = s.surface, .gap = 16, .p = 24, .borderRadius = "all-xl") {
         rcTextL("Delete this item?", .font = FONT_HEAD, .color = s.text);
         rcTextL("This cannot be undone.", .color = s.textMuted);
         rcRow(.gap = 8) {
@@ -332,15 +469,15 @@ if (rcBeginModal("dlg_confirm", &open)) {
 - Call `rcEndModal()` only when `rcBeginModal` returned `true`.
 - Build all modal content **between** `rcBeginModal` and `rcEndModal`; it
   sits inside the floating panel.
-- Place the `rcBeginModal` call **outside** the root column if you want the
-  scrim to cover the entire window (the usual case). Placing it inside a
-  container restricts the scrim to that container's bounds.
+- **The scrim always covers the whole window**, wherever you call `rcBeginModal`
+  from. It is a floating element attached to the root and sized to the viewport,
+  so an enclosing container does not restrict it.
 - Modals **stack, up to 8 deep**: a modal opened from inside another sits above
   it. Give each its own `bool` flag and a distinct id.
 
 ### Options: modality and dismissal are two *independent* axes
 
-`rcBeginModalEx` takes an `RC_ModalOptions` with two flags, and they control
+`rcBeginModal` takes an `RC_ModalOptions` with two flags, and they control
 completely different things. Mixing them up is the single most common way to get a
 popup that misbehaves, so it is worth being precise:
 
@@ -374,8 +511,8 @@ moves the slider *and* closes the panel.
 
 ```c
 /* A detached inspector: the app behind stays live, AND the panel survives clicks. */
-if (rcBeginModalEx("inspector", &open,
-        (RC_ModalOptions){ .modality = RC_MODALITY_NON_MODAL, .noBackdropDismiss = true })) {
+if (rcBeginModal("inspector", &open,
+        .noBackdropDismiss = true, .modality = RC_MODALITY_NON_MODAL)) {
     rcTextL("Inspector");
     if (rcButton("insp_close", "Close", RC_BTN_DEFAULT)) open = false;
     rcEndModal();
@@ -390,10 +527,10 @@ do not let the library clear it.
 
 Two more things worth knowing before you reach for a non-modal panel:
 
-- **It is still centered.** `rcBeginModalEx` always centers its panel; there is no
+- **It is still centered.** `rcBeginModal` always centers its panel; there is no
   offset or docking control. A real inspector usually wants to sit against an edge;
-  that is a plain `.floating` `rcBox` (see the `.floating` entry in
-  [`cheatsheet.md`](cheatsheet.md)), not this call.
+  that is a plain `.floating` `rcBox` (see [`RC_Float`](api-notes.md#rc_float) in
+  `api-notes.md`), not this call.
 - **A non-modal popup claims only the presses that land on itself**, so it cannot
   swallow input meant for the rest of your UI. (A modal's scrim, by design, claims
   every press on the window.)
@@ -416,17 +553,20 @@ RC_Series series[2] = {
     { .y = requests, .count = 24, .label = "requests" },
     { .y = errors,   .count = 24, .label = "errors"   },
 };
-rcChart("hourly", series, 2, (RC_ChartOptions){
-    .legend  = true,
+rcChart("hourly", series, 2, RC_LIT(RC_ChartOptions){
     .y       = { .grid = true },
-    .tooltip = RC_CHART_TOOLTIP_NEAREST,   /* hover => "x 10 / requests 78 / errors 3" */
+    .legend  = true,
+    .tooltip = RC_CHART_TOOLTIP_NEAREST,   /* hover => "x 10", then one swatched value per series */
 });
 ```
 
-`RC_CHART_TOOLTIP_NEAREST` floats a readout naming the hovered **x** plus **every series'
-value there**, so a two-axis chart reads out both series from one hover, and a gap in the
-data (a non-finite y) reads as a gap rather than a snapped-to-neighbour lie. *Which* datum
-counts as hovered depends on what the chart draws; that is the next section.
+`RC_CHART_TOOLTIP_NEAREST` floats a readout naming the hovered **x**, then one row per series:
+a colour swatch matching the series and its value there. The swatch is what identifies the series,
+because the rows carry no labels, so a two-axis chart reads out both series from one hover.
+**A series with no datum at that x still shows a value**: each row takes the nearest point whose y
+is finite, with no distance limit, so a gap in the data reads as its neighbour's value rather than
+as a gap. Chart the gap explicitly if a reader must be able to see it. *Which* datum counts as
+hovered depends on what the chart draws; that is the next section.
 
 **Do not hand-roll this.** It looks like a small job (track the pointer, divide by the
 plot width, index the array), and it is wrong at exactly the places people hover most.
@@ -465,7 +605,7 @@ fields, so the readout is still off until you set `.tooltip`, and once it is on,
 placements are available:
 
 ```c
-rcChart("dense", series, 4, (RC_ChartOptions){
+rcChart("dense", series, 4, RC_LIT(RC_ChartOptions){
     .tooltip      = RC_CHART_TOOLTIP_NEAREST,
     .tooltipPlace = RC_TOOLTIP_PLACE_CORNER,   /* keep the panel off a busy plot */
 });
@@ -473,27 +613,40 @@ rcChart("dense", series, 4, (RC_ChartOptions){
 
 - **`RC_TOOLTIP_PLACE_CURSOR`** is the default, and what a chart on the web does: the panel
   tracks the pointer, so the reading sits next to the thing being read instead of parked
-  across the plot. It flips by quadrant (leftward once the pointer passes the plot's
-  horizontal middle, upward past the vertical middle), so it always grows *away* from the
-  edge it would otherwise overrun.
+  across the plot. It picks its direction by quadrant (leftward once the pointer passes the
+  plot's horizontal middle, upward past the vertical middle), so it grows *away* from the
+  nearer plot edge; the view clamp below then keeps it on screen.
 - **`RC_TOOLTIP_PLACE_CORNER`** parks the panel in the **top** corner opposite the
   pointer's half (pointer on the left ⇒ panel top-right, and the reverse). It stays
-  entirely clear of the data, which makes it the better choice on a dense plot. **Name this
-  mode explicitly whenever the panel must stay off the plot.**
+  clear of the data under the pointer, which makes it the better choice on a dense plot.
+  **Name this mode explicitly whenever the panel must stay off the data.**
 - **`RC_TOOLTIP_PLACE_FIXED`** pins the panel at `.tooltipAnchor` (any of the nine
   `RC_Anchor` points; `0` is `RC_ANCHOR_TOP_LEFT`) and leaves it there whatever the
   pointer does. A dashboard that wants the readout to hold still wants this.
 
 `.tooltipOffset` is the gap from the anchor point. **It is a distance, not a direction**:
 the sign is applied for you, away from whichever edge the panel is leaning off, so one
-value reads the same in all four quadrants. Each component falls back independently when
-zero, so `{0}` means 12x12 and `{24, 0}` means 24x12: a zero component asks for the
-*default* gap, not a flush one.
+value reads the same in all four quadrants. Each component falls back independently, so
+`{0}` means 12x12 and `{24, 0}` means 24x12: a zero component asks for the *default* gap,
+not a flush one, and a negative or non-finite component is treated as zero rather than
+read as a direction.
 
-Placement is quadrant-based rather than measured, and that is deliberate. A floating
-panel's own size is not known until the frame after it is laid out, so positioning from
-the previous frame's size would make the panel jitter while the pointer moves. Flipping by
-quadrant costs nothing and never lags.
+**The mode chooses the direction; the position is then measured.** The panel's rows are
+formatted before it is emitted, so its size is known in the same frame - there is no
+previous-frame size to jitter on - and its resolved top-left is clamped into the
+*admissible view*: the window's visible extent, less the safe area and the soft keyboard
+(per edge, the larger of the two), wherever the view is zoomed or panned. A panel that fits
+is therefore never cut off by a window edge, a notch or an IME, in any mode; `CORNER` and
+`FIXED` keep their anchor as a preference and yield to the view the same way. A panel
+larger than the view on an axis cannot fit: it pins to that axis's leading edge so the
+header and the first rows stay readable, and the rest runs off the far side. The readout is
+withheld altogether when the view is unusable (fully occluded, or geometry the runner could
+not publish). Two things this does **not** promise: the panel is not kept inside the
+*plot* - `CORNER` parks it in a plot corner, but a panel taller or wider than the plot
+spills over the card around it, still inside the view - and it is not kept off the
+pointer once the clamp has moved it: the side is chosen by the pointer's plot quadrant
+and the clamp only slides the panel into the view, so a panel that had to move can
+cover the pointer even when the opposite side would have fit.
 
 ### Hover *in* the plot: `.hoverGuide` and `.hoverMarkers`
 
@@ -502,7 +655,7 @@ each number belongs to**, and that is the reading you actually want. Two indepen
 booleans draw the hover into the plot itself:
 
 ```c
-rcChart("hourly", series, 2, (RC_ChartOptions){
+rcChart("hourly", series, 2, RC_LIT(RC_ChartOptions){
     .legend       = true,
     .tooltip      = RC_CHART_TOOLTIP_NEAREST,
     .hoverGuide   = true,   /* vertical rule at the hovered x */
@@ -522,17 +675,10 @@ Both **default off**, so no existing chart changes, and both are **independent o
 `.tooltip`**: a guide with `.tooltip = RC_CHART_TOOLTIP_NONE` is a legitimate choice if you
 want the crosshair without the panel.
 
-**They cost an idle app nothing, and that is gated rather than asserted.** With the pointer
-parked away from the plot, the frame is byte-identical whether both fields are off or both
-are on: the work happens only while a pointer is actually over the plot. Hovering, the
-guide is one extra line and the markers two extra circles per series (the dot and its halo).
-
-That check runs on the render **digest**, which folds every primitive's arguments, rather
-than on a count of commands: a count cannot tell you a frame is unchanged, only that the
-same *number* of things were drawn. It is paired with a control arm (the same comparison
-with the pointer *on* the plot, which must differ), because an equality that holds because
-the instrument went blind looks exactly like an equality that holds because the code is
-right.
+**They cost an idle app nothing.** With the pointer parked away from the plot, the frame is
+byte-identical whether both fields are off or both are on: the work happens only while a
+pointer is actually over the plot. Hovering, the guide is one extra line and the markers two
+extra circles per series (the dot and its halo).
 
 ### Zoom, pan and brush: what you can build today
 
@@ -549,7 +695,7 @@ if (rcIsHovered("plot")) {
         lo = mid - half; hi = mid + half;
     }
 }
-rcChart("plot", s, 2, (RC_ChartOptions){ .x = { .min = lo, .max = hi } });
+rcChart("plot", s, 2, RC_LIT(RC_ChartOptions){ .x = { .min = lo, .max = hi } });
 ```
 
 This works because the wheel hands you a **scalar**: how much to zoom, not where. It
@@ -585,7 +731,7 @@ if (plot.found && plot.width > 0.0f) {                /* the WIDTH check is the 
         if (b1 - b0 > 0.0f) { lo = b0; hi = b1; }           /* ignore a click-with-no-drag */
     }
 }
-rcChart("plot", s, 2, (RC_ChartOptions){ .x = { .min = lo, .max = hi } });
+rcChart("plot", s, 2, RC_LIT(RC_ChartOptions){ .x = { .min = lo, .max = hi } });
 ```
 
 Three things that are easy to get wrong, all of them cheap to handle:
@@ -611,12 +757,15 @@ needs nothing from the pointer or the box. Keep both: the wheel for quick in/out
 
 **Tooltips are not a chart feature.** Any ordinary element gets one the same cheap way:
 `.tooltip = "Refresh"` on an `rcBox` / `rcRow` / `rcColumn`. Two conditions: the element
-**must carry an `.id`** (the tooltip is keyed and hit-tested by it), and the string must
-**outlive the frame**: a literal is ideal, a stack buffer is not. (Unlike an element `.id`,
-which RayClay hashes on the spot, the tooltip string is retained.) `NULL`/empty means none.
+**must carry an `.id`** (the tooltip is keyed and hit-tested by it), and the tooltip string must
+**outlive the frame**: a literal is ideal, a stack buffer is not. The `.id` is the weaker
+requirement, not a free one: it is hashed as the element opens, but the pointer is kept for the
+rest of the frame, so it has to stay valid until the frame is drawn. A buffer local to the layout
+callback satisfies that; one inside a helper that returns first does not. `rcFormat` on the frame
+arena settles both at once. `NULL`/empty means none.
 
 ```c
-rcBox(.id = "refresh", .tooltip = "Refresh (Ctrl+R)", .p = 8) { … }
+rcBox(.id = "refresh", .p = 8, .tooltip = "Refresh (Ctrl+R)") { … }
 ```
 
 ---
@@ -679,8 +828,8 @@ it alone and holds still the moment you scroll up.
 
 **Under the default `RC_RENDER_ON_DEMAND` this block only runs on a frame that actually
 happened, and `rcScrollToBottom` does not itself request one.** If the new line arrives from
-somewhere RayClay cannot see (a socket, a worker thread, a timer), call `rcAppRequestFrame(app)`
-where you append it, or `rcAppRequestFrameAfter(app, 0.1)` for a polled feed. Otherwise the window
+somewhere RayClay cannot see (a socket, a worker thread, a timer), call `rcWindowRequestFrame(rcAppMainWindow(app))`
+where you append it, or `rcWindowRequestFrameAfter(rcAppMainWindow(app), 0.1)` for a polled feed. Otherwise the window
 stays parked, the callback never runs, and the tail never follows. `ex12` sidesteps this by setting
 `.renderMode = RC_RENDER_CONTINUOUS`, because it measures the frame loop itself.
 
@@ -705,9 +854,9 @@ count. It composes with `rcBeginTable`: name the table's own id as the container
 house 6 px, which is the right default and is meant to be inherited when you have no opinion:
 
 ```c
-rcBeginTable("t", cols, 3, (RC_TableOptions){0});                        // 6 px: the house default
-rcBeginTable("t", cols, 3, (RC_TableOptions){ .cellPadding = RC_VAL(0) });  // flush, no padding at all
-rcBeginTable("t", cols, 3, (RC_TableOptions){ .cellPadding = RC_VAL(10) }); // exactly 10
+rcBeginTable("t", cols, 3, RC_LIT(RC_TableOptions){0});                        // 6 px: the house default
+rcBeginTable("t", cols, 3, RC_LIT(RC_TableOptions){ .cellPadding = RC_VAL(0) });  // flush, no padding at all
+rcBeginTable("t", cols, 3, RC_LIT(RC_TableOptions){ .cellPadding = RC_VAL(10) }); // exactly 10
 ```
 
 **`.cellPadding` is an `RC_OptFloat`, not a bare float**, so `RC_VAL(0)` really is zero, and an unset
@@ -717,6 +866,38 @@ field takes the 6 px default. Pass a bare number and the compiler will tell you:
 > only legitimate where zero has no valid meaning. A font size of `0` describes nothing, so
 > `0 => the slot's size` is fine. "No padding" describes something a caller can genuinely want, so
 > that field must be able to carry it.
+
+---
+### A row a user can pick: `rcTableRowId`
+
+`rcTableRow()` opens an **anonymous** row, which is the right thing for data you only read. The
+moment a row is something the user picks, it needs a name, and `rcTableRowId(id)` is that: it makes
+the row element itself a hit-test target, so `rcIsHovered(id)` / `rcClicked(id)` / `rcPressed(id)`
+answer for the whole row. Like `rcTableRow()`, it opens the row **and its first cell**, so the
+content of column 0 follows it directly and the first `rcTableNext()` moves to column 1.
+
+```c
+rcVirtualList(row, "Rows", total, 28) {
+    rcTableRowId(rcFormat(mem, "row-%d", row.index).chars);    /* opens the row AND cell 0 */
+    rcTextC(name[row.index]);
+    rcTableNext(); rcTextC(state[row.index]);
+}
+```
+
+**Build the id from the row's DATA index, never from its screen position.** Under `rcVirtualList`
+the screen position *is* the scroll window, so an id derived from it renames every row on every
+scroll: the hover you were tracking silently moves to a different record, and nothing warns. The
+data index is stable, which is the whole reason this takes an id rather than generating one.
+
+**Cells stay anonymous, deliberately.** A row id subsumes them; hit-testing each cell and hoping
+the six answers agree is the failure mode this exists to remove. Passing `NULL` or `""` is exactly
+`rcTableRow()` again.
+
+Two things a named row does *not* change: the id must live for the frame (`rcFormat` is the
+intended source - RayClay does not copy your strings), and a table row is still a table row, so
+if the row's *shape* has to change with the width - folding two columns into a second line, say -
+you are past what the column model expresses and want an `rcRow` of your own.
+`ex21_data_explorer` is the worked example of that second case.
 
 ---
 
@@ -734,12 +915,12 @@ Two correct fixes, and they suit different layouts:
 
 **1. Tag the widget cluster `RC_ID_WINDOW_NODRAG`**: the whole band stays draggable, and
 the hit-test treats that subtree as ordinary client area (which is how the built-in window
-controls have always been exempt). This is the desktop mirror of CSS
+controls are exempt). This is the desktop mirror of CSS
 `-webkit-app-region: no-drag`:
 
 ```c
 rcUnzoomed() {                                                     /* chrome, not content; see below */
-    rcRow(.id = RC_ID_WINDOW_DRAG, .w = "grow", .h = "56", .px = 14, .gap = 12, .align = "cl") {
+    rcRow(.id = RC_ID_WINDOW_DRAG, .gap = 12, .px = 14, .align = "cl", .w = "grow", .h = "56") {
         rcTextL("RayClay", .font = F_HEAD);
         rcBox(.w = "grow") {}                                          /* spacer: still drags */
         rcRow(.id = RC_ID_WINDOW_NODRAG, .gap = 8, .align = "cl") {    /* this cluster does not */
@@ -768,7 +949,7 @@ window is created, while a band you draw yourself is ordinary content and grows 
 content zoom. The bar you *see* stops matching the bar you can *grab*.
 
 Measured on a 46px band with `.titlebarHeight = 46`, reading
-`rcGetElementBox(RC_ID_WINDOW_DRAG).height × rcAppZoom(app)`, which is the band's physical height, and
+`rcGetElementBox(RC_ID_WINDOW_DRAG).height × rcWindowZoom(rcAppMainWindow(app))`, which is the band's physical height, and
 must equal 46 at every step:
 
 | content zoom | 0.50 | 0.75 | 1.00 | 1.25 | 1.50 | 2.00 |

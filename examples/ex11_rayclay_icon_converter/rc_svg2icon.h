@@ -2,28 +2,18 @@
 #define RC_SVG2ICON_H
 
 /*
- * rc_svg2icon.h - a faithful C99 port of tools/svg_to_rayclay_icon.py.
+ * rc_svg2icon.h - convert simple stroke/filled SVG icons (Lucide-style strokes,
+ * or hand-authored multi-colour artwork) into RayClay icon ops, then either
+ * preview them (rc_svg2icon_draw) or emit a header-only RayClay icon
+ * (rc_svg2icon_emit) you can call like any bundled icon.
  *
- * Convert simple stroke/filled SVG icons (Lucide-style strokes, or hand-authored
- * multi-colour artwork such as the RayClay logo) into the RayClay icon-op IR, and
- * from that IR either render a live preview (rc_svg2icon_draw) or emit a
- * generated RayClay icon header (rc_svg2icon_emit) byte-for-byte compatible with
- * the hand-migrated rc_icons_<name>.h headers.
+ * Single translation unit: every function is static. Malformed input never
+ * crashes - every budget is bounded, an exhausted one warns, and a bad tag or
+ * path is skipped with a warning and a partial result returned.
  *
- * Every function is `static` (one translation unit). RayClay tenet: never crash
- * on malformed input - all limits are bounded, overflow stops + warns, bad
- * XML/paths are skipped + warned and a partial result is returned.
- *
- * The converter half is reusable and links against nothing but libm. That is
- * deliberate and it is now true rather than nearly true: an offline generator
- * (the supported answer to an icon-API rename - regenerate, do not hand-edit the
- * output) needs parse + emit and no GUI library at all.
- *
+ * Parse + emit link against nothing but libm:
  *     cc -std=c99 -I<rayclay dir> -I<this dir> my_gen.c -o my_gen -lm
- *
- * The live preview is the exception and is opt-in: `#define RC_SVG2ICON_PREVIEW`
- * before including, and link RayClay. See the note above rc_svg2icon_draw for
- * what went wrong when it was unconditional.
+ * Drawing the result needs RayClay: #define RC_SVG2ICON_PREVIEW first.
  */
 
 #include "rayclay.h"   /* pulls in the icon scaffolding: RC_IconPoint, rcIconDraw*, RC_Color/BoundingBox */
@@ -41,9 +31,7 @@
     #define M_PI 3.14159265358979323846
 #endif
 
-/* ===========================================================================
-   Public op IR (see the API contract in the example's task brief)
-   =========================================================================== */
+/* Public op IR. */
 
 typedef enum { RC_SVG_ROUND_LINE, RC_SVG_POLYLINE, RC_SVG_CIRCLE_STROKE,
                RC_SVG_RRECT_STROKE, RC_SVG_FILLED_POLY, RC_SVG_FILLED_CIRCLE,
@@ -79,9 +67,7 @@ typedef struct {
     const char *warn[RC_SVG_MAX_WARN]; int warnCount;   /* static-string warnings */
 } RcSvgIcon;
 
-/* ===========================================================================
-   Internal geometry / parse scratch (not part of the public contract)
-   =========================================================================== */
+/* Internal geometry / parse scratch. */
 
 #define RC_SVG__MAX_SHAPES 512
 #define RC_SVG__MAX_SHAPE_POINTS 4096
@@ -91,7 +77,7 @@ typedef struct {
 typedef struct { float x, y; } RcSvgPoint;
 
 /* A resolved paint: NONE (no paint), CURRENT (the runtime colour argument), or a
-   baked (r,g,b,a) colour. Mirrors the Python's None / CURRENT_COLOR / tuple. */
+   baked (r,g,b,a) colour. */
 typedef enum { RC_PAINT_NONE, RC_PAINT_CURRENT, RC_PAINT_BAKED } RcSvgPaintKind;
 typedef struct {
     RcSvgPaintKind kind;
@@ -122,18 +108,10 @@ typedef struct {
     bool  overflow;          /* set once any pool is exhausted */
 } RcSvgParse;
 
-/* ===========================================================================
-   Local helpers that keep the CONVERTER half free of the RayClay runtime
-   =========================================================================== */
+/* Local helpers that keep the converter half free of the RayClay runtime. */
 
-/* rcStrCopy's contract, spelled locally on purpose.
- *
- * The converter half of this header - parse and emit - is the half an offline
- * generator uses, and it must LINK against nothing but libm. Reaching for
- * rcStrCopy made that untrue for two calls' worth of convenience: an external
- * consumer following our own published recipe got an undefined reference and no
- * hint that the fix was to link a GUI library they never wanted. Two lines of
- * C99 buy back a header that a generator can just compile. */
+/* rcStrCopy's contract, spelled locally: the converter half must link against
+   nothing but libm, and two lines of C99 buy that back. */
 static void rc_svg__str_copy(char *dst, const char *src, size_t cap) {
     size_t n;
     if (!dst || cap == 0) {
@@ -145,9 +123,7 @@ static void rc_svg__str_copy(char *dst, const char *src, size_t cap) {
     dst[n] = '\0';
 }
 
-/* ===========================================================================
-   Warnings (static strings only, bounded)
-   =========================================================================== */
+/* Warnings: static strings only, bounded. */
 
 static void rc_svg__warn(RcSvgIcon *icon, const char *msg) {
     if (!icon || icon->warnCount >= RC_SVG_MAX_WARN) {
@@ -163,9 +139,7 @@ static void rc_svg__warn(RcSvgIcon *icon, const char *msg) {
     icon->warn[icon->warnCount++] = msg;
 }
 
-/* ===========================================================================
-   Number / token scanning
-   =========================================================================== */
+/* Number / token scanning. */
 
 static bool rc_svg__is_cmd_char(char c) {
     switch (c) {
@@ -180,7 +154,7 @@ static bool rc_svg__is_cmd_char(char c) {
 }
 
 /* Scan a float (with optional sign/exponent) starting at s[*i]; advance *i past
-   it. Returns true and writes *out on success. Matches the Python FLOAT_RE grammar:
+   it. Returns true and writes *out on success. Grammar:
    [-+]?((\d+\.\d*)|(\.\d+)|(\d+))([eE][-+]?\d+)? */
 static bool rc_svg__scan_float(const char *s, int len, int *i, float *out) {
     int j = *i;
@@ -229,16 +203,10 @@ static bool rc_svg__scan_float(const char *s, int len, int *i, float *out) {
     return true;
 }
 
-/* Scan an SVG path arc FLAG. The path grammar defines a flag as a single
-   character:
-       flag: "0" | "1"
-   A flag is not a number, so reading one with the float scanner is wrong twice
-   over. It accepts what the grammar forbids - "2.4e31" read as a flag is what
-   made the conversion in rc_svg__arc undefined behaviour - and it rejects the
-   compact spelling every browser accepts, because "A5 5 0 1150 50" is a legal
-   arc with largeArc = 1, sweep = 1 and the endpoint (50,50).
-   Ported from the library's own SVG parser, which descends from this file,
-   where a fuzzer found it. */
+/* Scan an SVG path arc FLAG. The grammar defines a flag as a single character,
+   "0" or "1" - not a number. Reading one with the float scanner both accepts
+   what the grammar forbids and rejects the compact spelling browsers accept:
+   "A5 5 0 1150 50" is largeArc = 1, sweep = 1, endpoint (50,50). */
 static bool rc_svg__scan_flag(const char *s, int len, int *i, bool *out) {
     if (*i >= len || (s[*i] != '0' && s[*i] != '1')) {
         return false;
@@ -249,21 +217,9 @@ static bool rc_svg__scan_flag(const char *s, int len, int *i, bool *out) {
 }
 
 /* Index just past the "-->" that closes an XML comment beginning at or after
-   `from`, or -1 when no terminator lies inside `len`. A drop-in, length-bounded
-   replacement for strstr(s + from, "-->"): same start offset, same result.
-
-   WHY strstr WAS WRONG HERE. Every other scan in this parser is bounded by
-   `len`; strstr is bounded by a NUL, and the buffer is not required to carry
-   one. rc_svg2icon_parse takes a LENGTH by contract, and this header is
-   documented as reusable on its own - the docstring above gives the command for
-   building an offline generator against it - so a caller may legitimately hand
-   over an mmap'd slice or bytes off a socket. An unterminated "<!--" then ran
-   the scan off the end of the allocation. Reproduced with AddressSanitizer on a
-   FOUR-BYTE input: READ of size 5, 0 bytes after a 4-byte region.
-   ex11's own GUI path never reached it - read_file() in main.c NUL-terminates -
-   which is exactly why only the reusable path exposed it.
-   Ported from the library's own SVG parser, where fuzzing found the same two
-   scans. */
+   `from`, or -1 when no terminator lies inside `len`. Length-bounded rather than
+   NUL-bounded, because parse takes a LENGTH: the buffer may be an mmap'd slice
+   or bytes off a socket and need not carry a terminator. */
 static int rc_svg__comment_end(const char *s, int len, int from) {
     for (int j = from; j + 2 < len; j++) {
         if (s[j] == '-' && s[j + 1] == '-' && s[j + 2] == '>') {
@@ -280,9 +236,7 @@ static void rc_svg__skip_sep(const char *s, int len, int *i) {
     }
 }
 
-/* ===========================================================================
-   Bezier / arc flattening (ported verbatim from the Python)
-   =========================================================================== */
+/* Bezier / arc flattening. */
 
 static bool rc_svg__nearly_same(RcSvgPoint a, RcSvgPoint b) {
     const float eps = 1e-6f;
@@ -331,21 +285,16 @@ static bool rc_svg__push_pt(RcSvgParse *ps, RcSvgPoint p) {
 
 /* Flatten one SVG elliptical arc into points EXCLUDING start, appending them to
    the shape-point pool. Endpoint->centre parametrisation, radii correction,
-   arcDeg cap, >=4 steps, last point snapped to the exact end. Ported verbatim. */
+   arcDeg cap, >=4 steps, last point snapped to the exact end. */
 static void rc_svg__arc(RcSvgParse *ps, RcSvgPoint start, float rx, float ry,
                         float rotDeg, bool largeArc, bool sweep, RcSvgPoint end,
                         float maxSegDeg) {
     if (rc_svg__nearly_same(start, end)) {
         return;
     }
-    /* Load-bearing: every arc input must be finite before any of the maths
-       below runs. A radius of 1e30 makes rx*rx overflow to +inf, inf-inf is
-       NaN, and that NaN reaches the `(int)ceilf(...)` further down - which is
-       undefined behaviour, not merely a wrong number. Reproducer:
-           <svg viewBox="0 0 24 24"><path d="M0 0 A 1e30 1e30 0 1 1 3 3"/></svg>
-       On x86-64 the conversion happens to land on
-       INT_MIN and the `steps < 4` clamp catches it, so the OBSERVABLE damage
-       there is nil - that is not a defence, it is a platform accident. */
+    /* Load-bearing: every arc input must be finite before the maths below runs.
+       A radius of 1e30 makes rx*rx overflow to +inf, inf-inf is NaN, and
+       converting that NaN with (int)ceilf is undefined behaviour. */
     if (!isfinite(end.x) || !isfinite(end.y)) {
         rc_svg__warn(ps->icon, "path arc has a non-finite endpoint - segment skipped");
         return;   /* deliberately does NOT push `end`: that is the poison itself */
@@ -395,11 +344,8 @@ static void rc_svg__arc(RcSvgParse *ps, RcSvgPoint start, float rx, float ry,
         return;
     }
 
-    /* NOTE: largeArc and sweep are bool BY TYPE, and that is the gate. The two
-       (int) casts that stood here were undefined behaviour for any out-of-range
-       float; no float can reach them now without a diagnostic at the call site.
-       Guarding the casts would have been a per-site clamp - and a clamp cannot
-       help, because the undefined behaviour is the conversion itself. */
+    /* largeArc and sweep are bool BY TYPE: no out-of-range float can reach a
+       conversion here. */
     float sign = (largeArc == sweep) ? -1.0f : 1.0f;
     float factorSq = (rx2 * ry2 - rx2 * y1p2 - ry2 * x1p2) / denom;
     if (factorSq < 0.0f) {
@@ -425,12 +371,9 @@ static void rc_svg__arc(RcSvgParse *ps, RcSvgPoint start, float rx, float ry,
         delta += 2.0f * (float)M_PI;
     }
 
-    /* The inputs being finite is not enough - the intermediate maths can still
-       overflow. The second reproducer has finite radii and a huge START:
-           <svg viewBox="0 0 24 24"><path d="M1e30 0 A 5 5 0 1 1 3 3"/></svg>
-       which is what proves the cause is the arc maths generally rather than one
-       attribute. This is the guard that makes the (int) conversion below
-       provably safe, so the cast can never see a NaN. */
+    /* Finite inputs are not enough - the intermediate maths can still overflow
+       (finite radii with a huge start point do it). This guard is what makes the
+       (int) conversion below provably safe. */
     if (!isfinite(cx) || !isfinite(cy) || !isfinite(theta1) || !isfinite(delta)) {
         rc_svg__warn(ps->icon, "path arc geometry overflowed - drawn as a line to its endpoint");
         rc_svg__push_pt(ps, end);   /* `end` was proven finite at entry */
@@ -459,9 +402,7 @@ static void rc_svg__arc(RcSvgParse *ps, RcSvgPoint start, float rx, float ry,
     }
 }
 
-/* ===========================================================================
-   Colour parsing
-   =========================================================================== */
+/* Colour parsing. */
 
 static int rc_svg__hexval(char c) {
     if (c >= '0' && c <= '9') return c - '0';
@@ -482,7 +423,7 @@ static bool rc_svg__hex2(const char *s, int *out) {
 
 typedef struct { const char *name; unsigned char r, g, b, a; } RcSvgNamedColor;
 
-/* The Python's named-colour table, verbatim. */
+/* Named-colour table. */
 static const RcSvgNamedColor rc_svg__named[] = {
     { "black", 0, 0, 0, 255 },       { "white", 255, 255, 255, 255 },
     { "red", 255, 0, 0, 255 },       { "green", 0, 128, 0, 255 },
@@ -519,7 +460,7 @@ static int rc_svg__lower_trim(const char *v, int len, char *buf, int cap) {
 static RcSvgPaint rc_svg__parse_color(const char *v, int len) {
     RcSvgPaint p;
     p.kind = RC_PAINT_NONE;
-    p.color = (RC_Color){ 0, 0, 0, 0 };
+    p.color = RC_LIT(RC_Color){ 0, 0, 0, 0 };
     if (!v) {
         return p;
     }
@@ -567,14 +508,14 @@ static RcSvgPaint rc_svg__parse_color(const char *v, int len) {
             return p;
         }
         p.kind = RC_PAINT_BAKED;
-        p.color = (RC_Color){ (float)r, (float)g, (float)bl, (float)al };
+        p.color = RC_LIT(RC_Color){ (float)r, (float)g, (float)bl, (float)al };
         return p;
     }
 
     for (size_t i = 0; i < sizeof(rc_svg__named) / sizeof(rc_svg__named[0]); i++) {
         if (strcmp(low, rc_svg__named[i].name) == 0) {
             p.kind = RC_PAINT_BAKED;
-            p.color = (RC_Color){ (float)rc_svg__named[i].r, (float)rc_svg__named[i].g,
+            p.color = RC_LIT(RC_Color){ (float)rc_svg__named[i].r, (float)rc_svg__named[i].g,
                                     (float)rc_svg__named[i].b, (float)rc_svg__named[i].a };
             return p;
         }
@@ -582,9 +523,7 @@ static RcSvgPaint rc_svg__parse_color(const char *v, int len) {
     return p;   /* unrecognised: no paint */
 }
 
-/* ===========================================================================
-   Minimal XML tokeniser (attribute reads only; enough for icon SVGs)
-   =========================================================================== */
+/* Minimal XML tokeniser: attribute reads only, enough for icon SVGs. */
 
 typedef struct {
     char  name[32];
@@ -612,7 +551,7 @@ static const char *rc_svg__attr(const RcSvgElem *e, const char *name, int *lenOu
     return NULL;
 }
 
-/* Parse a float attribute (Python parse_number: first FLOAT_RE match, else default). */
+/* Parse a float attribute: the first number in the value, else the default. */
 static float rc_svg__attr_number(const RcSvgElem *e, const char *name, float def) {
     int len = 0;
     const char *v = rc_svg__attr(e, name, &len);
@@ -681,22 +620,110 @@ static bool rc_svg__css_property(const RcSvgElem *e, const char *name,
     return false;
 }
 
-static float rc_svg__stroke_width(const RcSvgElem *e, float inherited) {
-    const char *v; int len;
-    if (!rc_svg__css_property(e, "stroke-width", &v, &len)) {
-        return inherited;
+/* Which viewport dimension a percentage resolves against. SVG gives each
+   attribute its own reference rather than one shared basis: x-family lengths
+   against the width, y-family against the height, and a radius or a stroke
+   width against the normalised diagonal, because neither belongs to one axis. */
+typedef enum {
+    RC_SVG_REF_W = 0,
+    RC_SVG_REF_H,
+    RC_SVG_REF_DIAG
+} RcSvgRef;
+
+static float rc_svg__ref_length(const RcSvgIcon *icon, RcSvgRef ref) {
+    float w = icon ? icon->viewW : 0.0f;
+    float h = icon ? icon->viewH : 0.0f;
+
+    if (ref == RC_SVG_REF_W) {
+        return w;
     }
-    /* parse_number(raw, inherited). */
+    if (ref == RC_SVG_REF_H) {
+        return h;
+    }
+    return sqrtf((w * w + h * h) / 2.0f);
+}
+
+/* The first float in `v`, resolved as a percentage when a '%' follows it.
+   A bare number is user units and passes through unchanged, which is what an
+   icon export gives you; any OTHER suffix (pt, em, mm) is ignored. */
+/* One static instance so rc_svg__warn de-dups it by address: a file with twenty
+   `pt` strokes says this once. */
+static const char *const rc_svg__unit_suffix_msg =
+    "a length carries a unit suffix this converter does not convert "
+    "(pt pc mm cm in em ex rem); the bare number was kept as user units - "
+    "write the converted number instead";
+
+/* True when v[i..] is exactly one of the SVG 1.1 unit identifiers this converter
+   does not convert, ASCII case-folded because CSS reads units without regard to
+   case (`13pt`, `2EM`, `1.5rem`). The identifier must END there: `13ptx` is not
+   a unit and stays silent, and so do `px` (harmless: 1 px IS 1 user unit) and a
+   lone letter. No ctype call - a locale must not decide what a unit is. */
+static bool rc_svg__unit_suffix_unconverted(const char *v, int len, int i) {
+    static const char *const units[] = { "pt", "pc", "mm", "cm", "in", "em", "ex", "rem" };
+    char u[4];
+    int n = 0;
+
+    while (i + n < len && n < 4) {
+        char c = v[i + n];
+        if (c >= 'A' && c <= 'Z') {
+            c = (char)(c + ('a' - 'A'));
+        } else if (c < 'a' || c > 'z') {
+            break;
+        }
+        u[n++] = c;
+    }
+    if (n < 2 || n > 3) {
+        return false;
+    }
+    for (size_t k = 0; k < sizeof(units) / sizeof(units[0]); k++) {
+        if ((int)strlen(units[k]) == n && memcmp(units[k], u, (size_t)n) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static float rc_svg__resolve_length(const char *v, int len, RcSvgIcon *icon,
+                                    RcSvgRef ref, float def) {
     int i = 0;
+
     while (i < len) {
         int save = i;
         float out;
         if (rc_svg__scan_float(v, len, &i, &out)) {
+            while (i < len && (v[i] == ' ' || v[i] == '\t')) {
+                i++;
+            }
+            if (i < len && v[i] == '%') {
+                out = out / 100.0f * rc_svg__ref_length(icon, ref);
+            } else if (rc_svg__unit_suffix_unconverted(v, len, i)) {
+                rc_svg__warn(icon, rc_svg__unit_suffix_msg);
+            }
             return out;
         }
         i = save + 1;
     }
-    return inherited;
+    return def;
+}
+
+static float rc_svg__attr_length(const RcSvgParse *ps, const RcSvgElem *e,
+                                 const char *name, float def, RcSvgRef ref) {
+    int len = 0;
+    const char *v = rc_svg__attr(e, name, &len);
+
+    if (!v) {
+        return def;
+    }
+    return rc_svg__resolve_length(v, len, ps ? ps->icon : NULL, ref, def);
+}
+
+static float rc_svg__stroke_width(const RcSvgElem *e, float inherited,
+                                  RcSvgIcon *icon) {
+    const char *v; int len;
+    if (!rc_svg__css_property(e, "stroke-width", &v, &len)) {
+        return inherited;
+    }
+    return rc_svg__resolve_length(v, len, icon, RC_SVG_REF_DIAG, inherited);
 }
 
 /* Resolve fill/stroke honouring the cascade + inheritance; root default = NONE. */
@@ -708,8 +735,8 @@ static RcSvgPaint rc_svg__read_paint(const RcSvgElem *e, const char *attr,
     }
     RcSvgPaint p = rc_svg__parse_color(v, len);
     if (p.kind == RC_PAINT_NONE) {
-        /* Warn on an explicit-but-unsupported colour (rgb()/hsl()/unknown name),
-           matching the Python, so the author sees why the paint vanished. */
+        /* Warn on an explicit-but-unsupported colour (rgb()/hsl()/unknown name)
+           so the author sees why the paint vanished. */
         char low[16];
         rc_svg__lower_trim(v, len, low, (int)sizeof(low));
         if (low[0] != '\0' && strcmp(low, "none") != 0) {
@@ -723,9 +750,7 @@ static RcSvgPaint rc_svg__read_paint(const RcSvgElem *e, const char *attr,
     return p;
 }
 
-/* ===========================================================================
-   Element scanning
-   =========================================================================== */
+/* Element scanning. */
 
 static void rc_svg__strip_ns(const char *raw, int len, char *out, int cap) {
     /* Drop an XML namespace prefix ("svg:rect" -> "rect", "{ns}rect" -> "rect"). */
@@ -836,9 +861,7 @@ static bool rc_svg__scan_element(const char *s, int len, int *i, RcSvgElem *e) {
     return false;   /* unterminated */
 }
 
-/* ===========================================================================
-   viewBox / points-attr / path-data
-   =========================================================================== */
+/* viewBox / points-attr / path-data. */
 
 static void rc_svg__parse_viewbox(const RcSvgElem *root, float *vx, float *vy,
                                   float *vw, float *vh) {
@@ -880,7 +903,7 @@ static bool rc_svg__push_xy(RcSvgParse *ps, float x, float y) {
 }
 
 /* Parse a <polyline>/<polygon> "points" attribute into the shape-point pool.
-   Returns the count pushed (drops a trailing odd coordinate, per the Python). */
+   Returns the count pushed; a trailing odd coordinate is dropped. */
 static int rc_svg__parse_points_attr(RcSvgParse *ps, const char *v, int len, int *offOut) {
     float nums[2];
     int have = 0;
@@ -961,7 +984,7 @@ static void rc_svg__parse_path_data(RcSvgParse *ps, const char *d, int len,
     RcSvgPoint lastQuad = { 0.0f, 0.0f };  bool haveQuad = false;
 
     /* Local: read the next float token, honouring separators. Returns false at a
-       command boundary or end (matching the Python's read_float ValueError). */
+       command boundary or end of input. */
     #define RC_SVG_READ_FLOAT(dst) \
         do { \
             rc_svg__skip_sep(d, len, &i); \
@@ -1027,8 +1050,8 @@ static void rc_svg__parse_path_data(RcSvgParse *ps, const char *d, int len,
                 float x, y;
                 RC_SVG_READ_FLOAT(x);
                 RC_SVG_READ_FLOAT(y);
-                RcSvgPoint pt = relative ? (RcSvgPoint){ current.x + x, current.y + y }
-                                         : (RcSvgPoint){ x, y };
+                RcSvgPoint pt = relative ? RC_LIT(RcSvgPoint){ current.x + x, current.y + y }
+                                         : RC_LIT(RcSvgPoint){ x, y };
                 if (firstMoveto) {
                     if (haveSub) {
                         rc_svg__flush_subpath(ps, subStart, false, strokeWidth, fill, stroke);
@@ -1050,24 +1073,24 @@ static void rc_svg__parse_path_data(RcSvgParse *ps, const char *d, int len,
                 float x, y;
                 RC_SVG_READ_FLOAT(x);
                 RC_SVG_READ_FLOAT(y);
-                RcSvgPoint end = relative ? (RcSvgPoint){ current.x + x, current.y + y }
-                                          : (RcSvgPoint){ x, y };
+                RcSvgPoint end = relative ? RC_LIT(RcSvgPoint){ current.x + x, current.y + y }
+                                          : RC_LIT(RcSvgPoint){ x, y };
                 if (!rc_svg__push_pt(ps, end)) { goto done; }
                 current = end;
                 haveCubic = false; haveQuad = false;
             } else if (curUpper == 'H') {
                 float x;
                 RC_SVG_READ_FLOAT(x);
-                RcSvgPoint end = relative ? (RcSvgPoint){ current.x + x, current.y }
-                                          : (RcSvgPoint){ x, current.y };
+                RcSvgPoint end = relative ? RC_LIT(RcSvgPoint){ current.x + x, current.y }
+                                          : RC_LIT(RcSvgPoint){ x, current.y };
                 if (!rc_svg__push_pt(ps, end)) { goto done; }
                 current = end;
                 haveCubic = false; haveQuad = false;
             } else if (curUpper == 'V') {
                 float y;
                 RC_SVG_READ_FLOAT(y);
-                RcSvgPoint end = relative ? (RcSvgPoint){ current.x, current.y + y }
-                                          : (RcSvgPoint){ current.x, y };
+                RcSvgPoint end = relative ? RC_LIT(RcSvgPoint){ current.x, current.y + y }
+                                          : RC_LIT(RcSvgPoint){ current.x, y };
                 if (!rc_svg__push_pt(ps, end)) { goto done; }
                 current = end;
                 haveCubic = false; haveQuad = false;
@@ -1076,9 +1099,12 @@ static void rc_svg__parse_path_data(RcSvgParse *ps, const char *d, int len,
                 RC_SVG_READ_FLOAT(x1); RC_SVG_READ_FLOAT(y1);
                 RC_SVG_READ_FLOAT(x2); RC_SVG_READ_FLOAT(y2);
                 RC_SVG_READ_FLOAT(x);  RC_SVG_READ_FLOAT(y);
-                RcSvgPoint c1 = relative ? (RcSvgPoint){ current.x + x1, current.y + y1 } : (RcSvgPoint){ x1, y1 };
-                RcSvgPoint c2 = relative ? (RcSvgPoint){ current.x + x2, current.y + y2 } : (RcSvgPoint){ x2, y2 };
-                RcSvgPoint end = relative ? (RcSvgPoint){ current.x + x, current.y + y } : (RcSvgPoint){ x, y };
+                RcSvgPoint c1 = relative ? RC_LIT(RcSvgPoint){ current.x + x1, current.y + y1 }
+                                         : RC_LIT(RcSvgPoint){ x1, y1 };
+                RcSvgPoint c2 = relative ? RC_LIT(RcSvgPoint){ current.x + x2, current.y + y2 }
+                                         : RC_LIT(RcSvgPoint){ x2, y2 };
+                RcSvgPoint end = relative ? RC_LIT(RcSvgPoint){ current.x + x, current.y + y }
+                                          : RC_LIT(RcSvgPoint){ x, y };
                 for (int step = 1; step <= ps->curveSteps; step++) {
                     RcSvgPoint pp = rc_svg__cubic(current, c1, c2, end, (float)step / (float)ps->curveSteps);
                     if (!rc_svg__push_pt(ps, pp)) { goto done; }
@@ -1092,12 +1118,14 @@ static void rc_svg__parse_path_data(RcSvgParse *ps, const char *d, int len,
                 RcSvgPoint c1;
                 char pu = prevCommand ? (char)toupper((unsigned char)prevCommand) : 0;
                 if ((pu == 'C' || pu == 'S') && haveCubic) {
-                    c1 = (RcSvgPoint){ 2.0f * current.x - lastCubic.x, 2.0f * current.y - lastCubic.y };
+                    c1 = RC_LIT(RcSvgPoint){ 2.0f * current.x - lastCubic.x, 2.0f * current.y - lastCubic.y };
                 } else {
                     c1 = current;
                 }
-                RcSvgPoint c2 = relative ? (RcSvgPoint){ current.x + x2, current.y + y2 } : (RcSvgPoint){ x2, y2 };
-                RcSvgPoint end = relative ? (RcSvgPoint){ current.x + x, current.y + y } : (RcSvgPoint){ x, y };
+                RcSvgPoint c2 = relative ? RC_LIT(RcSvgPoint){ current.x + x2, current.y + y2 }
+                                         : RC_LIT(RcSvgPoint){ x2, y2 };
+                RcSvgPoint end = relative ? RC_LIT(RcSvgPoint){ current.x + x, current.y + y }
+                                          : RC_LIT(RcSvgPoint){ x, y };
                 for (int step = 1; step <= ps->curveSteps; step++) {
                     RcSvgPoint pp = rc_svg__cubic(current, c1, c2, end, (float)step / (float)ps->curveSteps);
                     if (!rc_svg__push_pt(ps, pp)) { goto done; }
@@ -1108,8 +1136,10 @@ static void rc_svg__parse_path_data(RcSvgParse *ps, const char *d, int len,
                 float x1, y1, x, y;
                 RC_SVG_READ_FLOAT(x1); RC_SVG_READ_FLOAT(y1);
                 RC_SVG_READ_FLOAT(x);  RC_SVG_READ_FLOAT(y);
-                RcSvgPoint c = relative ? (RcSvgPoint){ current.x + x1, current.y + y1 } : (RcSvgPoint){ x1, y1 };
-                RcSvgPoint end = relative ? (RcSvgPoint){ current.x + x, current.y + y } : (RcSvgPoint){ x, y };
+                RcSvgPoint c = relative ? RC_LIT(RcSvgPoint){ current.x + x1, current.y + y1 }
+                                        : RC_LIT(RcSvgPoint){ x1, y1 };
+                RcSvgPoint end = relative ? RC_LIT(RcSvgPoint){ current.x + x, current.y + y }
+                                          : RC_LIT(RcSvgPoint){ x, y };
                 for (int step = 1; step <= ps->curveSteps; step++) {
                     RcSvgPoint pp = rc_svg__quad(current, c, end, (float)step / (float)ps->curveSteps);
                     if (!rc_svg__push_pt(ps, pp)) { goto done; }
@@ -1122,11 +1152,12 @@ static void rc_svg__parse_path_data(RcSvgParse *ps, const char *d, int len,
                 RcSvgPoint c;
                 char pu = prevCommand ? (char)toupper((unsigned char)prevCommand) : 0;
                 if ((pu == 'Q' || pu == 'T') && haveQuad) {
-                    c = (RcSvgPoint){ 2.0f * current.x - lastQuad.x, 2.0f * current.y - lastQuad.y };
+                    c = RC_LIT(RcSvgPoint){ 2.0f * current.x - lastQuad.x, 2.0f * current.y - lastQuad.y };
                 } else {
                     c = current;
                 }
-                RcSvgPoint end = relative ? (RcSvgPoint){ current.x + x, current.y + y } : (RcSvgPoint){ x, y };
+                RcSvgPoint end = relative ? RC_LIT(RcSvgPoint){ current.x + x, current.y + y }
+                                          : RC_LIT(RcSvgPoint){ x, y };
                 for (int step = 1; step <= ps->curveSteps; step++) {
                     RcSvgPoint pp = rc_svg__quad(current, c, end, (float)step / (float)ps->curveSteps);
                     if (!rc_svg__push_pt(ps, pp)) { goto done; }
@@ -1139,7 +1170,8 @@ static void rc_svg__parse_path_data(RcSvgParse *ps, const char *d, int len,
                 RC_SVG_READ_FLOAT(rx); RC_SVG_READ_FLOAT(ry); RC_SVG_READ_FLOAT(rot);
                 RC_SVG_READ_FLAG(la);  RC_SVG_READ_FLAG(sw);
                 RC_SVG_READ_FLOAT(x);  RC_SVG_READ_FLOAT(y);
-                RcSvgPoint end = relative ? (RcSvgPoint){ current.x + x, current.y + y } : (RcSvgPoint){ x, y };
+                RcSvgPoint end = relative ? RC_LIT(RcSvgPoint){ current.x + x, current.y + y }
+                                          : RC_LIT(RcSvgPoint){ x, y };
                 rc_svg__arc(ps, current, rx, ry, rot, la, sw, end, ps->arcDeg);
                 current = end;
                 haveCubic = false; haveQuad = false;
@@ -1149,26 +1181,12 @@ static void rc_svg__parse_path_data(RcSvgParse *ps, const char *d, int len,
 
         malformed:
             rc_svg__warn(ps->icon, "malformed path; skipped incomplete tail");
-            /* Load-bearing: this skip is what guarantees the loop terminates,
-               and its absence was an infinite hang on a 47-byte file:
-                   <svg viewBox="0 0 24 24"><path d="M0 0 L@"/></svg>
-               RC_SVG_READ_FLOAT RESTORES the index when a scan fails, so `i`
-               came back here unmoved and the `continue` below re-entered the
-               outer loop on the same byte, forever - and the warning above is
-               de-duplicated, so it printed once and then the process spun.
-               Nothing to do with `@` or with arcs: any byte that cannot start
-               a number does it, INCLUDING \xc3 - the lead byte of every two-byte
-               UTF-8 character - so an accented character in path data was
-               enough, with no attacker involved. The comment under
-               `after_params` already promised this ("the next command token
-               restarts cleanly") and the code never implemented it.
-               Why skip to the next command rather than abandon the path:
-               reaching `malformed` on a command char is legitimately recoverable
-               (a command arriving where a parameter was expected), and stopping
-               the whole path there would discard valid geometry that follows.
-               The loop cannot spin - either d[i] is already a command char and
-               the outer loop consumes it, or i strictly advances.
-               Ported from the library's own SVG parser. */
+            /* Load-bearing: skip to the next command character. The float scan
+               RESTORES the index when it fails, so without this the outer loop
+               re-enters on the same byte forever - any byte that cannot start a
+               number does it, including the lead byte of a UTF-8 character.
+               Skipping rather than abandoning the path keeps the valid geometry
+               that follows the bad token. */
             while (i < len && !rc_svg__is_cmd_char(d[i])) {
                 i++;
             }
@@ -1182,15 +1200,10 @@ static void rc_svg__parse_path_data(RcSvgParse *ps, const char *d, int len,
         if (command != 0 && (command == 'M' || command == 'm')) {
             command = islower((unsigned char)command) ? 'l' : 'L';
         }
-        /* NOTE: reaching here via `malformed` does NOT stop the whole path. The
-           `malformed`
-           handler above skips forward to the next command character, so this
-           `continue` re-enters the outer loop and parsing RESUMES there; every
-           point accumulated before the bad token is kept and flushed by
-           rc_svg__flush_subpath, which discards a subpath of fewer than 2
-           points. The result is a PARTIAL path, not a dropped one.
-           Kept as a NOTE because the code and this comment disagreed for as
-           long as both existed: a comment is a claim, not a guard. */
+        /* Reaching here via `malformed` does NOT stop the whole path: parsing
+           resumes at the next command character and every point accumulated
+           before the bad token is kept. The result is a PARTIAL path, not a
+           dropped one. */
         continue;
     }
 
@@ -1203,9 +1216,7 @@ done:
     #undef RC_SVG_READ_FLAG
 }
 
-/* ===========================================================================
-   Shape collection (recursive, bounded depth)
-   =========================================================================== */
+/* Shape collection: recursive, bounded depth. */
 
 static void rc_svg__add_shape(RcSvgParse *ps, RcSvgShape sh) {
     if (ps->shapeCount >= RC_SVG__MAX_SHAPES) {
@@ -1284,7 +1295,7 @@ static void rc_svg__report_ignored_attrs(RcSvgIcon *icon, const RcSvgElem *e) {
 static void rc_svg__handle_element(RcSvgParse *ps, const char *s, int len, int *i,
                                    const RcSvgElem *e, float inhStrokeW,
                                    RcSvgPaint inhFill, RcSvgPaint inhStroke, int depth) {
-    float strokeWidth = rc_svg__stroke_width(e, inhStrokeW);
+    float strokeWidth = rc_svg__stroke_width(e, inhStrokeW, ps->icon);
     RcSvgPaint fill = rc_svg__read_paint(e, "fill", inhFill, ps->icon);
     RcSvgPaint stroke = rc_svg__read_paint(e, "stroke", inhStroke, ps->icon);
 
@@ -1302,8 +1313,10 @@ static void rc_svg__handle_element(RcSvgParse *ps, const char *s, int len, int *
         RcSvgShape sh; memset(&sh, 0, sizeof(sh));
         sh.kind = RC_SHAPE_PATH;
         int off = ps->ptCount;
-        bool ok1 = rc_svg__push_xy(ps, rc_svg__attr_number(e, "x1", 0.0f), rc_svg__attr_number(e, "y1", 0.0f));
-        bool ok2 = rc_svg__push_xy(ps, rc_svg__attr_number(e, "x2", 0.0f), rc_svg__attr_number(e, "y2", 0.0f));
+        bool ok1 = rc_svg__push_xy(ps, rc_svg__attr_length(ps, e, "x1", 0.0f, RC_SVG_REF_W),
+                                 rc_svg__attr_length(ps, e, "y1", 0.0f, RC_SVG_REF_H));
+        bool ok2 = rc_svg__push_xy(ps, rc_svg__attr_length(ps, e, "x2", 0.0f, RC_SVG_REF_W),
+                                 rc_svg__attr_length(ps, e, "y2", 0.0f, RC_SVG_REF_H));
         if (ok1 && ok2) {
             sh.ptOff = off; sh.ptCount = 2; sh.closed = false;
             sh.strokeWidth = strokeWidth; sh.fill = fill; sh.stroke = stroke;
@@ -1327,12 +1340,12 @@ static void rc_svg__handle_element(RcSvgParse *ps, const char *s, int len, int *
             }
         }
     } else if (strcmp(tag, "rect") == 0) {
-        float x = rc_svg__attr_number(e, "x", 0.0f);
-        float y = rc_svg__attr_number(e, "y", 0.0f);
-        float w = rc_svg__attr_number(e, "width", 0.0f);
-        float h = rc_svg__attr_number(e, "height", 0.0f);
-        float rx = rc_svg__attr_number(e, "rx", 0.0f);
-        float ry = rc_svg__attr_number(e, "ry", rx);
+        float x = rc_svg__attr_length(ps, e, "x", 0.0f, RC_SVG_REF_W);
+        float y = rc_svg__attr_length(ps, e, "y", 0.0f, RC_SVG_REF_H);
+        float w = rc_svg__attr_length(ps, e, "width", 0.0f, RC_SVG_REF_W);
+        float h = rc_svg__attr_length(ps, e, "height", 0.0f, RC_SVG_REF_H);
+        float rx = rc_svg__attr_length(ps, e, "rx", 0.0f, RC_SVG_REF_W);
+        float ry = rc_svg__attr_length(ps, e, "ry", rx, RC_SVG_REF_H);
         if (w > 0.0f && h > 0.0f) {
             RcSvgShape sh; memset(&sh, 0, sizeof(sh));
             sh.kind = RC_SHAPE_RECT;
@@ -1341,9 +1354,9 @@ static void rc_svg__handle_element(RcSvgParse *ps, const char *s, int len, int *
             rc_svg__add_shape(ps, sh);
         }
     } else if (strcmp(tag, "circle") == 0) {
-        float cx = rc_svg__attr_number(e, "cx", 0.0f);
-        float cy = rc_svg__attr_number(e, "cy", 0.0f);
-        float r = rc_svg__attr_number(e, "r", 0.0f);
+        float cx = rc_svg__attr_length(ps, e, "cx", 0.0f, RC_SVG_REF_W);
+        float cy = rc_svg__attr_length(ps, e, "cy", 0.0f, RC_SVG_REF_H);
+        float r = rc_svg__attr_length(ps, e, "r", 0.0f, RC_SVG_REF_DIAG);
         if (r > 0.0f) {
             RcSvgShape sh; memset(&sh, 0, sizeof(sh));
             sh.kind = RC_SHAPE_CIRCLE;
@@ -1352,10 +1365,10 @@ static void rc_svg__handle_element(RcSvgParse *ps, const char *s, int len, int *
             rc_svg__add_shape(ps, sh);
         }
     } else if (strcmp(tag, "ellipse") == 0) {
-        float cx = rc_svg__attr_number(e, "cx", 0.0f);
-        float cy = rc_svg__attr_number(e, "cy", 0.0f);
-        float rx = rc_svg__attr_number(e, "rx", 0.0f);
-        float ry = rc_svg__attr_number(e, "ry", 0.0f);
+        float cx = rc_svg__attr_length(ps, e, "cx", 0.0f, RC_SVG_REF_W);
+        float cy = rc_svg__attr_length(ps, e, "cy", 0.0f, RC_SVG_REF_H);
+        float rx = rc_svg__attr_length(ps, e, "rx", 0.0f, RC_SVG_REF_W);
+        float ry = rc_svg__attr_length(ps, e, "ry", 0.0f, RC_SVG_REF_H);
         if (rx > 0.0f && ry > 0.0f) {
             RcSvgShape sh; memset(&sh, 0, sizeof(sh));
             sh.kind = RC_SHAPE_ELLIPSE;
@@ -1427,12 +1440,10 @@ static void rc_svg__collect(RcSvgParse *ps, const char *s, int len, int *i,
     }
 }
 
-/* ===========================================================================
-   Op building (folds the Python's generate_header / _colored plan)
-   =========================================================================== */
+/* Op building. */
 
-/* 64-sample circle/ellipse ring used for non-circular ellipses (Python
-   circle_points, count=64), appended to icon->points. Returns the point offset. */
+/* 64-sample circle/ellipse ring used for non-circular ellipses, appended to
+   icon->points. Returns the point offset. */
 static int rc_svg__emit_circle_ring(RcSvgIcon *out, float cx, float cy,
                                     float rx, float ry, int count) {
     int off = out->pointCount;
@@ -1519,87 +1530,153 @@ static bool rc_svg__paint_is_paint(RcSvgPaint p) {
     return p.kind == RC_PAINT_BAKED || p.kind == RC_PAINT_CURRENT;
 }
 
-/* A currentColor paint in a coloured icon bakes as black (Python note). */
+/* A currentColor paint in a coloured icon bakes as black. */
 static RC_Color rc_svg__baked_color(RcSvgPaint p) {
     if (p.kind == RC_PAINT_BAKED) {
         return p.color;
     }
-    return (RC_Color){ 0, 0, 0, 255 };   /* currentColor -> black */
+    return RC_LIT(RC_Color){ 0, 0, 0, 255 };   /* currentColor -> black */
 }
 
-/* Coloured-emit shape grouping. The Python separates each SOURCE SHAPE with a
-   blank line, but a shape can produce two ops (fill THEN stroke) that must NOT be
-   split. RcSvgOp/RcSvgIcon are a fixed shared contract (cannot carry an extra
-   flag), so the fill/stroke->shape boundary is recorded here in a file-scope
-   parallel array. Single translation unit, single-threaded tool: safe. Index i is
-   true iff op i is the FIRST op of a new source shape. Only the coloured path
-   uses it; the mono path has one op per shape and its own blank-line rule. */
+/* Coloured-emit shape grouping. Each SOURCE SHAPE is separated by a blank line,
+   but a shape can produce two ops (fill THEN stroke) that must NOT be split.
+   RcSvgOp/RcSvgIcon are a fixed shared contract, so the fill/stroke->shape
+   boundary is recorded here instead: index i is true iff op i is the FIRST op of
+   a new source shape. Only the coloured path uses it. */
 static bool rc_svg__op_shape_start[RC_SVG_MAX_OPS];
 
-/* MONO op building: one op per shape, baked=false. Mirrors generate_header's plan. */
+/* True for the op kinds that actually draw an edge. The shared `stroke` constant
+   is computed over these alone: a fill-only shape carries a strokeWidth no op
+   ever reads, and counting it breaks the constant for a value nothing uses. */
+static bool rc_svg__op_strokes(RcSvgOpKind k) {
+    return k == RC_SVG_ROUND_LINE || k == RC_SVG_POLYLINE
+        || k == RC_SVG_CIRCLE_STROKE || k == RC_SVG_RRECT_STROKE;
+}
+
+/* MONO op building, baked=false. Mirrors generate_header's plan.
+   FILL AND STROKE ARE INDEPENDENT, and a shape carrying both emits both, fill
+   first - painter's order, matching the coloured builder. Reading only the
+   stroke turns a solid disc into a ring of its own outline, which at icon sizes
+   is a sub-pixel smear rather than a shape: RayClay's own monochrome logo came
+   out with its four filled circles drawn as 2.0-unit rings in a 731-unit
+   viewBox, 0.06 device pixels at a 22 px titlebar.
+   On this path a paint can only be the currentColor sentinel - a shape baking a
+   concrete colour routes to rc_svg__build_colored instead - so a fill draws with
+   the caller's `color` and the (float size, RC_Color color) signature holds.
+   A shape with NEITHER paint still strokes, which is the long-standing default
+   for artwork that relies on a stylesheet this parser does not resolve. */
 static void rc_svg__build_mono(RcSvgIcon *out, const RcSvgParse *ps) {
     for (int si = 0; si < ps->shapeCount; si++) {
         const RcSvgShape *sh = &ps->shapes[si];
-        RcSvgOp op; memset(&op, 0, sizeof(op));
-        op.baked = false;
+        const bool fills   = sh->fill.kind   != RC_PAINT_NONE;
+        const bool strokes = sh->stroke.kind != RC_PAINT_NONE || !fills;
+        RcSvgOp op;
 
         if (sh->kind == RC_SHAPE_RECT) {
-            if (sh->rx > 0.0f) {
-                if (sh->ry > 0.0f && fabsf(sh->rx - sh->ry) > 1e-6f) {
-                    rc_svg__warn(out, "rect rx != ry; using rx for the rounded stroke");
-                }
-                op.kind = RC_SVG_RRECT_STROKE;
-                op.p[0] = sh->x; op.p[1] = sh->y; op.p[2] = sh->w; op.p[3] = sh->h; op.p[4] = sh->rx;
-                op.stroke = sh->strokeWidth;
-                rc_svg__push_op(out, op);
-            } else {
+            if (fills) {
                 int off, count;
+                if (sh->rx > 0.0f) {
+                    rc_svg__warn(out, "filled rect corner radius ignored (no filled rounded-rect helper)");
+                }
                 rc_svg__rect_corners(out, sh, &off, &count);
-                op.kind = RC_SVG_POLYLINE;
+                memset(&op, 0, sizeof(op));
+                op.kind = RC_SVG_FILLED_POLY;
                 op.pointOff = off; op.pointCount = count;
-                op.closed = true; op.stroke = sh->strokeWidth;
                 rc_svg__push_op(out, op);
+            }
+            if (strokes) {
+                memset(&op, 0, sizeof(op));
+                if (sh->rx > 0.0f) {
+                    if (sh->ry > 0.0f && fabsf(sh->rx - sh->ry) > 1e-6f) {
+                        rc_svg__warn(out, "rect rx != ry; using rx for the rounded stroke");
+                    }
+                    op.kind = RC_SVG_RRECT_STROKE;
+                    op.p[0] = sh->x; op.p[1] = sh->y; op.p[2] = sh->w; op.p[3] = sh->h; op.p[4] = sh->rx;
+                    op.stroke = sh->strokeWidth;
+                    rc_svg__push_op(out, op);
+                } else {
+                    int off, count;
+                    rc_svg__rect_corners(out, sh, &off, &count);
+                    op.kind = RC_SVG_POLYLINE;
+                    op.pointOff = off; op.pointCount = count;
+                    op.closed = true; op.stroke = sh->strokeWidth;
+                    rc_svg__push_op(out, op);
+                }
             }
         } else if (sh->kind == RC_SHAPE_CIRCLE) {
-            op.kind = RC_SVG_CIRCLE_STROKE;
-            op.p[0] = sh->cx; op.p[1] = sh->cy; op.p[2] = sh->r;
-            op.stroke = sh->strokeWidth;
-            rc_svg__push_op(out, op);
-        } else if (sh->kind == RC_SHAPE_ELLIPSE) {
-            if (fabsf(sh->rx - sh->ry) <= 1e-6f) {
-                op.kind = RC_SVG_CIRCLE_STROKE;
-                op.p[0] = sh->cx; op.p[1] = sh->cy; op.p[2] = sh->rx;
-                op.stroke = sh->strokeWidth;
-                rc_svg__push_op(out, op);
-            } else {
-                rc_svg__warn(out, "non-circular ellipse flattened to a polyline (no ellipse helper)");
-                int off = rc_svg__emit_circle_ring(out, sh->cx, sh->cy, sh->rx, sh->ry, 64);
-                op.kind = RC_SVG_POLYLINE;
-                op.pointOff = off; op.pointCount = out->pointCount - off;
-                op.closed = true; op.stroke = sh->strokeWidth;
+            if (fills) {
+                memset(&op, 0, sizeof(op));
+                op.kind = RC_SVG_FILLED_CIRCLE;
+                op.p[0] = sh->cx; op.p[1] = sh->cy; op.p[2] = sh->r;
                 rc_svg__push_op(out, op);
             }
-        } else { /* RC_SHAPE_PATH */
-            if (sh->ptCount == 2 && !sh->closed) {
-                op.kind = RC_SVG_ROUND_LINE;
-                op.p[0] = ps->pts[sh->ptOff].x; op.p[1] = ps->pts[sh->ptOff].y;
-                op.p[2] = ps->pts[sh->ptOff + 1].x; op.p[3] = ps->pts[sh->ptOff + 1].y;
+            if (strokes) {
+                memset(&op, 0, sizeof(op));
+                op.kind = RC_SVG_CIRCLE_STROKE;
+                op.p[0] = sh->cx; op.p[1] = sh->cy; op.p[2] = sh->r;
                 op.stroke = sh->strokeWidth;
                 rc_svg__push_op(out, op);
-            } else {
+            }
+        } else if (sh->kind == RC_SHAPE_ELLIPSE) {
+            const bool roundEnough = fabsf(sh->rx - sh->ry) <= 1e-6f;
+            if (fills) {
+                memset(&op, 0, sizeof(op));
+                if (roundEnough) {
+                    op.kind = RC_SVG_FILLED_CIRCLE;
+                    op.p[0] = sh->cx; op.p[1] = sh->cy; op.p[2] = sh->rx;
+                } else {
+                    op.kind = RC_SVG_FILLED_ELLIPSE;
+                    op.p[0] = sh->cx; op.p[1] = sh->cy; op.p[2] = sh->rx; op.p[3] = sh->ry;
+                }
+                rc_svg__push_op(out, op);
+            }
+            if (strokes) {
+                memset(&op, 0, sizeof(op));
+                if (roundEnough) {
+                    op.kind = RC_SVG_CIRCLE_STROKE;
+                    op.p[0] = sh->cx; op.p[1] = sh->cy; op.p[2] = sh->rx;
+                    op.stroke = sh->strokeWidth;
+                    rc_svg__push_op(out, op);
+                } else {
+                    rc_svg__warn(out, "non-circular ellipse flattened to a polyline (no ellipse helper)");
+                    int off = rc_svg__emit_circle_ring(out, sh->cx, sh->cy, sh->rx, sh->ry, 64);
+                    op.kind = RC_SVG_POLYLINE;
+                    op.pointOff = off; op.pointCount = out->pointCount - off;
+                    op.closed = true; op.stroke = sh->strokeWidth;
+                    rc_svg__push_op(out, op);
+                }
+            }
+        } else { /* RC_SHAPE_PATH */
+            if (fills) {
                 int count;
                 int off = rc_svg__copy_points(out, ps, sh->ptOff, sh->ptCount, &count);
-                op.kind = RC_SVG_POLYLINE;
+                memset(&op, 0, sizeof(op));
+                op.kind = RC_SVG_FILLED_POLY;
                 op.pointOff = off; op.pointCount = count;
-                op.closed = sh->closed; op.stroke = sh->strokeWidth;
                 rc_svg__push_op(out, op);
+            }
+            if (strokes) {
+                memset(&op, 0, sizeof(op));
+                if (sh->ptCount == 2 && !sh->closed) {
+                    op.kind = RC_SVG_ROUND_LINE;
+                    op.p[0] = ps->pts[sh->ptOff].x; op.p[1] = ps->pts[sh->ptOff].y;
+                    op.p[2] = ps->pts[sh->ptOff + 1].x; op.p[3] = ps->pts[sh->ptOff + 1].y;
+                    op.stroke = sh->strokeWidth;
+                    rc_svg__push_op(out, op);
+                } else {
+                    int count;
+                    int off = rc_svg__copy_points(out, ps, sh->ptOff, sh->ptCount, &count);
+                    op.kind = RC_SVG_POLYLINE;
+                    op.pointOff = off; op.pointCount = count;
+                    op.closed = sh->closed; op.stroke = sh->strokeWidth;
+                    rc_svg__push_op(out, op);
+                }
             }
         }
     }
 }
 
-/* COLOURED op building: FILL first then STROKE per shape, baked=true. Mirrors
-   generate_header_colored. */
+/* COLOURED op building: FILL first then STROKE per shape, baked=true. */
 static void rc_svg__build_colored(RcSvgIcon *out, RcSvgParse *ps) {
     bool usesColor = false;
     memset(rc_svg__op_shape_start, 0, sizeof(rc_svg__op_shape_start));
@@ -1618,7 +1695,7 @@ static void rc_svg__build_colored(RcSvgIcon *out, RcSvgParse *ps) {
             RcSvgPaint fp = sh->fill;
             /* currentColor stays runtime (baked=false -> emits the `color` arg,
                draw() uses monoColor); its .color is the documented {0,0,0,255}
-               fallback. An explicit colour is baked. Matches the Python emit. */
+               fallback. An explicit colour is baked. */
             bool fbaked = (fp.kind == RC_PAINT_BAKED);
             if (fp.kind == RC_PAINT_CURRENT) usesColor = true;
             RC_Color fc = rc_svg__baked_color(fp);
@@ -1737,13 +1814,9 @@ static void rc_svg__build_colored(RcSvgIcon *out, RcSvgParse *ps) {
     }
 }
 
-/* ===========================================================================
-   Public: parse
-
-   `svg` MUST be NUL-terminated at svg[len] (i.e. the buffer is len+1 bytes): the
-   comment/CDATA skip scans for the closing delimiter and relies on that sentinel.
-   The bundled app satisfies this (read_file always writes buf[len] = '\0').
-   =========================================================================== */
+/* Public: parse. `svg` is read as exactly `len` bytes and does NOT need a NUL
+   terminator - every scan in this file is length-bounded, so an mmap'd slice or
+   a socket buffer is a legitimate input. */
 
 static inline bool rc_svg2icon_parse(const char *svg, int len, int curveSteps, float arcDeg, RcSvgIcon *out) {
     if (!out) {
@@ -1813,7 +1886,7 @@ static inline bool rc_svg2icon_parse(const char *svg, int len, int curveSteps, f
     out->viewW = vw;
     out->viewH = vh;
 
-    float rootStrokeW = rc_svg__stroke_width(&root, 2.0f);
+    float rootStrokeW = rc_svg__stroke_width(&root, 2.0f, out);
     RcSvgPaint none = { RC_PAINT_NONE, { 0, 0, 0, 0 } };
     RcSvgPaint rootFill = rc_svg__read_paint(&root, "fill", none, out);
     RcSvgPaint rootStroke = rc_svg__read_paint(&root, "stroke", none, out);
@@ -1888,21 +1961,10 @@ static inline bool rc_svg2icon_parse(const char *svg, int len, int curveSteps, f
     return true;
 }
 
-/* ===========================================================================
-   Public: live preview draw - OPT-IN, because it is the only half that needs
-   RayClay's icon RUNTIME linked
-   ===========================================================================
-
-   Define RC_SVG2ICON_PREVIEW before including this header if you want to draw
-   an icon you just parsed. An OFFLINE GENERATOR does not, and must not pay for
-   it: this function calls seven rcIconDraw* helpers that live in the RayClay
-   implementation, so compiling it obliges the caller to link the library.
-
-   The guard is not a convenience. Without it a generator that never calls this
-   function still emits it: the seven rcIconDraw* references go undefined at -O0,
-   while -O2 dead-strips them and links. A build that succeeds only because the
-   optimiser removed something is not a supported build - it fails the moment a
-   consumer builds Debug, which is the first thing they do. */
+/* Public: live preview draw - OPT-IN. Define RC_SVG2ICON_PREVIEW before
+   including this header to draw an icon you just parsed: it calls the RayClay
+   icon helpers and so obliges the caller to link the library. An offline
+   generator leaves it undefined and links against nothing but libm. */
 #ifdef RC_SVG2ICON_PREVIEW
 static inline void rc_svg2icon_draw(const RcSvgIcon *icon, RC_BoundingBox bounds, RC_Color monoColor) {
     if (!icon || !icon->ok) {
@@ -1950,12 +2012,10 @@ static inline void rc_svg2icon_draw(const RcSvgIcon *icon, RC_BoundingBox bounds
 }
 #endif /* RC_SVG2ICON_PREVIEW */
 
-/* ===========================================================================
-   Emit helpers: float / name formatting
-   =========================================================================== */
+/* Emit helpers: float / name formatting. */
 
-/* Render a float exactly like the Python fmt_float(): round to `precision`, strip
-   trailing zeros/dot, map -0 -> 0, always end "N.0f". */
+/* Render a float: round to `precision`, strip trailing zeros/dot, map -0 -> 0,
+   always end "N.0f". */
 static void rc_svg__fmt_float(float value, int precision, char *buf, int cap) {
     if (precision < 0) precision = 0;
     if (precision > 9) precision = 9;
@@ -2026,8 +2086,7 @@ static void rc_svg__w_int(RcSvgWriter *w, int value) {
 }
 
 /* PascalCase a name: split on non-alnum, uppercase each part's first letter,
-   preserve the rest. Prefix "Icon" if it would start with a digit / be empty.
-   Matches to_pascal_case. */
+   preserve the rest. Prefix "Icon" if it would start with a digit / be empty. */
 static void rc_svg__pascal(const char *name, char *out, int cap) {
     int oi = 0;
     int i = 0;
@@ -2062,7 +2121,7 @@ static void rc_svg__pascal(const char *name, char *out, int cap) {
 }
 
 /* Split into words across separators, camel/Pascal humps, and digit boundaries,
-   join with '_', uppercase, then wrap as RC_ICON_<...>_H. Matches to_guard. */
+   join with '_', uppercase, then wrap as RC_ICON_<...>_H. */
 static void rc_svg__guard(const char *name, char *out, int cap) {
     char words[64];   /* underscore-joined word buffer */
     int wi = 0;
@@ -2130,14 +2189,12 @@ static void rc_svg__guard(const char *name, char *out, int cap) {
     snprintf(out, (size_t)cap, "RC_ICON_%s_H", words);
 }
 
-/* Render a viewBox dimension for the doc comment (Python fmt_viewbox_dim: "%g"). */
+/* Render a viewBox dimension for the doc comment. */
 static void rc_svg__fmt_viewbox_dim(float value, char *buf, int cap) {
     snprintf(buf, (size_t)cap, "%g", (double)value);
 }
 
-/* ===========================================================================
-   Emit: doc comment (reproduces generate_doc_comment)
-   =========================================================================== */
+/* Emit: doc comment. */
 
 static void rc_svg__emit_doc_comment(RcSvgWriter *w, const char *svgName,
                                      float vw, float vh) {
@@ -2146,13 +2203,9 @@ static void rc_svg__emit_doc_comment(RcSvgWriter *w, const char *svgName,
     rc_svg__fmt_viewbox_dim(vw, wtag, (int)sizeof(wtag));
     rc_svg__fmt_viewbox_dim(vh, htag, (int)sizeof(htag));
 
-    /* A general converter must NOT claim a source (e.g. "(Lucide)") for an
-       arbitrary user SVG; keep the attribution neutral. */
     char prose[512];
     snprintf(prose, sizeof(prose),
-             "Generated from %s. The layout pass owns placement; the library draws "
-             "the icon through the rc_gfx seam during RayClay's custom render pass. "
-             "Source viewBox: %sx%s.",
+             "Generated from %s. Source viewBox: %sx%s.",
              svgName, wtag, htag);
 
     /* Greedy-fill the first line to DOC_WRAP_WIDTH (4-space indent included);
@@ -2201,13 +2254,16 @@ static void rc_svg__emit_doc_comment(RcSvgWriter *w, const char *svgName,
     rc_svg__w_str(w, "/*\n");
     rc_svg__w_str(w, first);
     rc_svg__w_str(w, "\n");
-    rc_svg__w_str(w, second);
-    rc_svg__w_str(w, "\n*/\n");
+    /* Only when a word did not fit: prose short enough for one line must not
+       trail an indent-only second line into the reader's own source tree. */
+    if (taken < wordCount) {
+        rc_svg__w_str(w, second);
+        rc_svg__w_str(w, "\n");
+    }
+    rc_svg__w_str(w, "*/\n");
 }
 
-/* ===========================================================================
-   Emit: point array (shared by mono + coloured)
-   =========================================================================== */
+/* Emit: point array, shared by mono + coloured. */
 
 static void rc_svg__emit_point_array(RcSvgWriter *w, const RcSvgIcon *icon,
                                      const RcSvgOp *op, int index, int precision) {
@@ -2236,9 +2292,20 @@ static void rc_svg__w_pad(RcSvgWriter *w, int n) {
     }
 }
 
-/* ===========================================================================
-   Public: emit
-   =========================================================================== */
+/* Public: the function name rc_svg2icon_emit will give an icon generated under
+   `name`, so a caller can show it before anything is written. Same transform. */
+static inline void rc_svg2icon_symbol(const char *name, char *out, int cap) {
+    char pascal[128];
+    if (!out || cap <= 0) {
+        return;
+    }
+    rc_svg__pascal(name ? name : "Icon", pascal, (int)sizeof(pascal));
+    /* Bound the name explicitly rather than leaving snprintf to truncate: the
+       caller's buffer may be shorter than a Pascal name, and "rcIcon" is 6. */
+    snprintf(out, (size_t)cap, "rcIcon%.*s", cap > 7 ? cap - 7 : 0, pascal);
+}
+
+/* Public: emit. */
 
 static inline int rc_svg2icon_emit(const RcSvgIcon *icon, const char *pascalName,
                             const char *svgName, int precision, char *out, int cap) {
@@ -2304,9 +2371,9 @@ static inline int rc_svg2icon_emit(const RcSvgIcon *icon, const char *pascalName
         for (int oi = 0; oi < icon->opCount; oi++) {
             const RcSvgOp *op = &icon->ops[oi];
 
-            /* The Python separates each SOURCE SHAPE with a blank line; a shape's
-               fill + stroke ops stay together. rc_svg__op_shape_start[oi] marks
-               the first op of each shape (set by rc_svg__build_colored). */
+            /* Each SOURCE SHAPE is separated by a blank line; a shape's fill +
+               stroke ops stay together. rc_svg__op_shape_start[oi] marks the
+               first op of each shape. */
             if (oi > 0 && rc_svg__op_shape_start[oi]) {
                 rc_svg__w_str(&w, "\n");
             }
@@ -2459,16 +2526,30 @@ static inline int rc_svg2icon_emit(const RcSvgIcon *icon, const char *pascalName
         if (icon->opCount == 0) {
             rc_svg__w_str(&w, "    (void)bounds; (void)color;\n");
         } else {
-            /* Uniform stroke? (all op widths equal, rounded to `precision`). */
-            bool uniform = true;
+            /* Uniform stroke? All STROKING op widths equal, rounded to
+               `precision`. A fill op carries no width, so including one would
+               compare a zero against real widths and drop the shared constant
+               for a value no emitted call ever reads. */
+            bool uniform = false;
+            int  firstStroke = -1;
             char firstW[48];
-            rc_svg__fmt_float(icon->ops[0].stroke, precision, firstW, (int)sizeof(firstW));
-            for (int oi = 1; oi < icon->opCount; oi++) {
-                char thisW[48];
-                rc_svg__fmt_float(icon->ops[oi].stroke, precision, thisW, (int)sizeof(thisW));
-                if (strcmp(firstW, thisW) != 0) {
-                    uniform = false;
-                    break;
+            for (int oi = 0; oi < icon->opCount; oi++) {
+                if (!rc_svg__op_strokes(icon->ops[oi].kind)) {
+                    continue;
+                }
+                if (firstStroke < 0) {
+                    firstStroke = oi;
+                    uniform = true;
+                    rc_svg__fmt_float(icon->ops[oi].stroke, precision, firstW, (int)sizeof(firstW));
+                    continue;
+                }
+                {
+                    char thisW[48];
+                    rc_svg__fmt_float(icon->ops[oi].stroke, precision, thisW, (int)sizeof(thisW));
+                    if (strcmp(firstW, thisW) != 0) {
+                        uniform = false;
+                        break;
+                    }
                 }
             }
 
@@ -2478,7 +2559,7 @@ static inline int rc_svg2icon_emit(const RcSvgIcon *icon, const char *pascalName
             rc_svg__w_str(&w, ";\n");
             if (uniform) {
                 rc_svg__w_str(&w, "    const float stroke  = ");
-                rc_svg__w_float(&w, icon->ops[0].stroke, precision);
+                rc_svg__w_float(&w, icon->ops[firstStroke].stroke, precision);
                 rc_svg__w_str(&w, ";\n");
             }
             rc_svg__w_str(&w, "\n");
@@ -2488,8 +2569,8 @@ static inline int rc_svg2icon_emit(const RcSvgIcon *icon, const char *pascalName
             int prevKind = -1;
             for (int oi = 0; oi < icon->opCount; oi++) {
                 const RcSvgOp *op = &icon->ops[oi];
-                bool isBlock = (op->kind == RC_SVG_POLYLINE);
-                bool prevBlock = (prevKind == RC_SVG_POLYLINE);
+                bool isBlock = (op->kind == RC_SVG_POLYLINE || op->kind == RC_SVG_FILLED_POLY);
+                bool prevBlock = (prevKind == RC_SVG_POLYLINE || prevKind == RC_SVG_FILLED_POLY);
                 if (oi > 0 && (isBlock || prevBlock)) {
                     rc_svg__w_str(&w, "\n");
                 }
@@ -2571,8 +2652,45 @@ static inline int rc_svg2icon_emit(const RcSvgIcon *icon, const char *pascalName
                     rc_svg__w_str(&w, op->closed ? ", true, color);\n" : ", false, color);\n");
                     break;
                 }
+                case RC_SVG_FILLED_CIRCLE:
+                    rc_svg__w_str(&w, "    rcIconDrawFilledCircle(bounds, ");
+                    rc_svg__w_float(&w, op->p[0], precision);
+                    rc_svg__w_str(&w, ", ");
+                    rc_svg__w_float(&w, op->p[1], precision);
+                    rc_svg__w_str(&w, ", ");
+                    rc_svg__w_float(&w, op->p[2], precision);
+                    rc_svg__w_str(&w, ", viewBox, color);\n");
+                    break;
+                case RC_SVG_FILLED_ELLIPSE:
+                    rc_svg__w_str(&w, "    rcIconDrawFilledEllipse(bounds, ");
+                    rc_svg__w_float(&w, op->p[0], precision);
+                    rc_svg__w_str(&w, ", ");
+                    rc_svg__w_float(&w, op->p[1], precision);
+                    rc_svg__w_str(&w, ", ");
+                    rc_svg__w_float(&w, op->p[2], precision);
+                    rc_svg__w_str(&w, ", ");
+                    rc_svg__w_float(&w, op->p[3], precision);
+                    rc_svg__w_str(&w, ", viewBox, color);\n");
+                    break;
+                case RC_SVG_FILLED_POLY: {
+                    char arr[16];
+                    snprintf(arr, sizeof(arr), "path%d", polyIndex);
+                    rc_svg__emit_point_array(&w, icon, op, polyIndex, precision);
+                    polyIndex++;
+                    rc_svg__w_str(&w, "    rcIconDrawFilledPolygon(bounds, ");
+                    rc_svg__w_str(&w, arr);
+                    rc_svg__w_str(&w, ",\n");
+                    rc_svg__w_pad(&w, (int)strlen("    rcIconDrawFilledPolygon("));
+                    rc_svg__w_str(&w, "(int)(sizeof(");
+                    rc_svg__w_str(&w, arr);
+                    rc_svg__w_str(&w, ") / sizeof(");
+                    rc_svg__w_str(&w, arr);
+                    rc_svg__w_str(&w, "[0])),\n");
+                    rc_svg__w_pad(&w, (int)strlen("    rcIconDrawFilledPolygon("));
+                    rc_svg__w_str(&w, "viewBox, color);\n");
+                    break;
+                }
                 default:
-                    /* Fill ops never appear in the mono path. */
                     break;
                 }
                 prevKind = (int)op->kind;

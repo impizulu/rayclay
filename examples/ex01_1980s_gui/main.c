@@ -1,26 +1,22 @@
 /*
-================================================================================
     main.c - RayClay "1980s desktop" example (early Macintosh calculator)
 
-    A working four-function calculator in the strict 1-bit look of an early
-    Macintosh (System 1, 1984): pure black-on-white, thin 1px black borders and
-    square hand-drawn chrome. Same source -> desktop AND web. Zero-asset:
-    bundled Latin-1 font baked at runtime; a hand-drawn close box; no images,
-    no file loads.
+    A working four-function calculator in the strict 1-bit look of System 1
+    (1984): black on white, square 1px chrome, a striped title bar, and keys
+    that invert under the pointer. Same source -> desktop, web and phone.
 
-    The whole aesthetic is one custom monochrome RC_Style installed at startup;
-    the era's one window control is a 14px close box wired to the runner via
-    RC_ID_WINDOW_CLOSE, and every key is a raw box that inverts on hover for a
-    crisp 1-bit "pressed" feel.
+    Shows: a custom monochrome RC_Style, a hand-drawn title bar wired to the
+    runner through the RC_ID_WINDOW_* ids, menus, a baked font ladder, and a
+    layout that sizes its keys from the space it measures rather than from a
+    table of devices. Zero-asset - the bundled face is baked at startup.
 
     Build target: rayclay_ex01_1980s_gui
-================================================================================
 */
 
 #include "rayclay.h"
 
 /* Font ladder baked from the bundled face at these sizes - zero-asset. */
-typedef enum { F_BODY = 0, F_DISPLAY, F_COUNT } AppFont;
+typedef enum { F_BODY = 0, F_DISPLAY, F_DISPLAY_LG, F_COUNT } AppFont;
 
 /* Calculator state (lives in .userData - zero per-frame heap allocation). */
 typedef struct {
@@ -30,9 +26,6 @@ typedef struct {
     bool   fresh;  /* true when the next digit should start a new number  */
 } AppState;
 
-/* ── pure state helpers (no libc - arithmetic only) ──────────────────────── */
-
-/* Append one decimal digit (0-9) to the number being entered. */
 static void calc_digit(AppState *st, int d) {
     if (st->fresh) {
         st->cur   = 0;
@@ -41,7 +34,6 @@ static void calc_digit(AppState *st, int d) {
     st->cur = st->cur * 10.0 + (double)d;
 }
 
-/* Fold the pending operator over (acc, cur) and store the result in acc. */
 static double calc_eval(double acc, double cur, char op) {
     switch (op) {
     case '+': return acc + cur;
@@ -52,10 +44,9 @@ static double calc_eval(double acc, double cur, char op) {
     }
 }
 
-/* Press an operator key: resolve any pending op, then arm the next one. '=' is
-   just calc_op(st, 0) - it folds the pending op and leaves none armed. The fold
-   only runs when an operand was actually entered (fresh == false), so changing
-   or repeating an operator never double-applies the current value. */
+/* An operator key folds the pending op, then arms the next one; '=' is
+   calc_op(st, 0). The fold runs only when an operand was actually entered
+   (fresh == false), so repeating or changing an operator never applies cur twice. */
 static void calc_op(AppState *st, char op) {
     if (!st->fresh)
         st->acc = st->op ? calc_eval(st->acc, st->cur, st->op) : st->cur;
@@ -64,65 +55,115 @@ static void calc_op(AppState *st, char op) {
     st->fresh = true;
 }
 
-/* Press 'C': back to a pristine zero. */
 static void calc_clear(AppState *st) {
     st->acc = st->cur = 0;
     st->op    = 0;
     st->fresh = true;
 }
 
-/* ── one calculator key ──────────────────────────────────────────────────── */
-
-/* A raw box restyled into a 1-bit key: white by default, INVERTED to black on
-   hover (the era's press feedback). Returns true on the frame it is clicked. */
+/* A raw box restyled into a 1-bit key: white, INVERTED to black under the
+   pointer, which is how the era showed a press. It fills its row on both axes;
+   KEY_ROW owns the height. A NULL label draws the minus BAR instead of a glyph -
+   the bundled face is a Latin-1 subset, so the only minus it can set is a short
+   hyphen, visibly lighter than the divide, multiply and plus keys beside it. */
 static bool key(const char *id, const char *label) {
     bool hot = rcIsHovered(id);
-    rcBox(.id = id, .w = "grow", .h = "44px", .align = "cc",
-           .bg = hot ? RC_BLACK : RC_WHITE,
-           .border = { .color = RC_BLACK, .width = "1px" }) {
-        rcTextC(label, .font = F_BODY, .color = hot ? RC_WHITE : RC_BLACK);
+    rcBox(.id = id, .bg = hot ? RC_BLACK : RC_WHITE, .align = "cc",
+          .border = { .color = RC_BLACK, .width = "1px" }, .w = "grow", .h = "grow") {
+        if (label)
+            rcTextC(label, .font = F_BODY, .color = hot ? RC_WHITE : RC_BLACK);
+        else
+            rcBox(.bg = hot ? RC_WHITE : RC_BLACK, .w = "11px", .h = "2px") {}
     }
     return rcClicked(id);
 }
 
-/* ── layout ──────────────────────────────────────────────────────────────── */
+/* One row of the 4x4 grid. The rows GROW into whatever height the face has left,
+   so a key is capped at a SQUARE - the side that four keys and three gaps leave
+   of the width - and floored at 44, the touch-target minimum every platform
+   guideline agrees on. Min beats max, so a very narrow window gets 44. */
+#define KEY_ROW(cap) rcRow(.gap = 8, .w = "grow", .h = "grow", .hMin = 44, .hMax = (cap))
+
+/* The widest a key may get, so a large window gets a calculator-sized face
+   rather than a keypad stretched across it. */
+#define KEY_MAX 88.0f
+
+/* The six 1px rules of a System 1 title bar; one run goes each side of the
+   name, which sits in a clear white gap between them. */
+static void title_stripes(void) {
+    rcColumn(.gap = 2, .align = "cc", .w = "grow") {
+        for (int i = 0; i < 6; i++) {
+            rcBox(.bg = RC_BLACK, .w = "grow", .h = "1px") {}
+        }
+    }
+}
+
+/* A single black hairline: the seam between two bands of chrome. */
+static void hairline(void) {
+    rcBox(.bg = RC_BLACK, .w = "grow", .h = "1px") {}
+}
 
 static void layout(RC_App *app, void *userData) {
     AppState *st = (AppState *)userData;
 
-    /* Window body: one white sheet filling the frame. */
-    rcColumn(.id = "Root", .w = "grow", .h = "grow", .bg = RC_WHITE) {
-        /* Title bar - draggable; System-1 style: close box left, centred name.
-           The 14px box fits the 22px bar (rcWindowControls' 38px cluster
-           would overflow it) and closes via the RC_ID_WINDOW_CLOSE contract. */
-        /* Chrome, not content: RC_AppOptions.titlebarHeight freezes the OS drag
-           strip in physical px, so a band that grew with the content zoom would
-           stop matching the strip the OS lets you drag. Measured before this
-           existed: at 2x zoom the drawn band was exactly twice the draggable one. */
+    /* SAFE AREA. A phone draws the window edge to edge, UNDER the status bar and
+       the home indicator, and nothing moves content out of the way for you.
+       rcViewport().safe hands the margins over ALREADY IN LAYOUT UNITS - spend
+       them once here at the root. Do NOT divide rcGetSafeAreaInsets() by the zoom
+       yourself; that is wrong under RC_ZOOM_OPTICAL and is per-axis besides.
+       Zero on desktop unless RAYCLAY_SAFE_INSETS stands a phone's bands in, so
+       this is one code path everywhere. */
+    RC_Insets safe = rcViewport().safe;
+
+    /* A close box acts on an OS window, and web and mobile have none: there the
+       RC_ID_WINDOW_* ids are inert, so a box drawn on those targets is dead
+       chrome. rcChildWindowsSupported() is the public answer to "does this
+       target have windows", so there is no #ifdef. */
+    bool windowed = rcChildWindowsSupported();
+
+    /* One 1px frame; every band inside it is parted by a single hairline, so no
+       two rules ever abut. Top-CENTRE reaches the face alone - the bars span. */
+    rcColumn(.id = "Root", .bg = RC_WHITE, .pt = (uint16_t)(safe.top),
+             .pb = (uint16_t)(safe.bottom), .pl = (uint16_t)(safe.left),
+             .pr = (uint16_t)(safe.right), .align = "tc",
+             .border = { .color = RC_BLACK, .width = "1px" },
+             .w = "grow", .h = "grow") {
+        /* Title bar: striped, draggable, close box left, centred name. Its
+           hairline is INSIDE the band, so the whole 22px is tagged and matches
+           .titlebarHeight - the OS drag strip, frozen in physical px, which is
+           also why rcUnzoomed() holds the band at a constant on-screen size. */
         rcUnzoomed() {
-            rcRow(.id = RC_ID_WINDOW_DRAG, .w = "grow", .h = "22px", .bg = RC_WHITE,
-                   .px = 8, .gap = 8, .align = "cl",
-                   .border = { .color = RC_BLACK, .width = "1px" }) {
-                bool over = rcIsHovered(RC_ID_WINDOW_CLOSE);
-                rcBox(.id = RC_ID_WINDOW_CLOSE, .w = "14px", .h = "14px",
-                       .bg = over ? RC_BLACK : RC_WHITE,
-                       .border = { .color = RC_BLACK, .width = "1px" }) {}
-                rcBox(.w = "grow", .align = "cc") {
-                    rcTextL("Calculator", .font = F_BODY, .color = RC_BLACK);
+            rcColumn(.id = RC_ID_WINDOW_DRAG, .bg = RC_WHITE,
+                     .w = "grow", .h = "22px") {
+                rcRow(.gap = 6, .px = 6, .align = "cc", .w = "grow", .h = "grow") {
+                    if (windowed) {
+                        bool over = rcIsHovered(RC_ID_WINDOW_CLOSE);
+                        /* Hand-drawn chrome polls hover, not rcClicked, so it
+                           has to name the pointer cursor itself. */
+                        if (over) rcSetCursor(RC_CURSOR_POINTER);
+                        rcBox(.id = RC_ID_WINDOW_CLOSE, .bg = over ? RC_BLACK : RC_WHITE,
+                              .border = { .color = RC_BLACK, .width = "1px" },
+                              .w = "14px", .h = "14px") {}
+                    }
+                    title_stripes();
+                    rcBox(.bg = RC_WHITE, .px = 6, .align = "cc") {
+                        rcTextL("Calculator", .font = F_BODY, .color = RC_BLACK);
+                    }
+                    title_stripes();
+                    /* Mirror spacer keeps the title optically centred. */
+                    if (windowed) {
+                        rcBox(.w = "14px") {}
+                    }
                 }
-                /* Mirror spacer keeps the title optically centred. */
-                rcBox(.w = "14px") {}
+                hairline();
             }
         }
 
-        /* Menu bar - File / Edit, black text on white, square.
-           Deliberately no .h here. A fixed height does not shrink its
-           children; they overflow it and draw through the bar's own bottom
-           rule. Omitting .h means FIT (rayclay.h: NULL or "" -> FIT), so the
-           bar is always exactly as tall as the triggers inside it. */
-        rcRow(.id = "MenuBar", .w = "grow", .bg = RC_WHITE,
-               .px = 8, .gap = 16, .align = "cl",
-               .border = { .color = RC_BLACK, .width = "1px" }) {
+        /* Menu bar. Deliberately no .h: a fixed height does not shrink its
+           children, they overflow it - omitting it means FIT. .py keeps a
+           trigger's own edge off the hairlines above and below. */
+        rcRow(.id = "MenuBar", .bg = RC_WHITE, .gap = 16, .px = 8, .py = 3,
+              .align = "cl", .w = "grow") {
             if (rcBeginMenu("m_file", "File")) {
                 if (rcMenuItem("Quit")) rcAppRequestClose(app);
                 rcEndMenu();
@@ -132,36 +173,57 @@ static void layout(RC_App *app, void *userData) {
                 rcEndMenu();
             }
         }
+        hairline();
 
-        /* Calculator face. */
-        rcColumn(.id = "Face", .w = "grow", .h = "grow", .p = 12, .gap = 8) {
-            /* Right-aligned numeric display. */
-            rcBox(.id = "Display", .w = "grow", .h = "48px", .align = "cr",
-                   .px = 10, .bg = RC_WHITE,
-                   .border = { .color = RC_BLACK, .width = "1px" }) {
+        /* The square key side: rcViewport().width - the width the face is laid
+           out in, which no device table can tell you - less the safe bands and
+           the face's 12px padding, shared by four keys and three 8px gaps. */
+        RC_Viewport vp = rcViewport();
+        float faceW    = vp.width - safe.left - safe.right - 2.0f * 12.0f;
+        if (faceW > KEY_MAX * 4.0f + 8.0f * 3.0f)
+            faceW = KEY_MAX * 4.0f + 8.0f * 3.0f;
+        float keySide  = (faceW - 3.0f * 8.0f) / 4.0f;
+        if (keySide < 44.0f) keySide = 44.0f;   /* the floor wins; see KEY_ROW */
+
+        /* Room for a big number gets one; measured height, not a platform. */
+        bool tall = vp.height >= 600.0f;
+
+        /* BOTTOM-ALIGNED, because the keypad belongs under the thumb: every
+           child is capped, so a tall screen's leftover lands above the display. */
+        rcColumn(.id = "Face", .gap = 8, .p = 12, .align = "bc",
+                 .w = "grow", .h = "grow", .wMax = faceW + 2.0f * 12.0f) {
+            /* The display takes the slack: a tall screen makes the readout
+               taller, never the keys. */
+            rcBox(.id = "Display", .bg = RC_WHITE, .px = 10, .py = 8,
+                  .align = "br", .border = { .color = RC_BLACK, .width = "1px" },
+                  .w = "grow", .h = "grow", .hMin = 48, .hMax = keySide * 2.0f) {
+                /* rcText BORROWS these bytes until the frame is drawn - the
+                   frame arena outlives the frame, a local buffer would not. */
                 RC_String v = rcFormat(rcAppArena(app), "%g", st->cur);
-                rcText(v, .font = F_DISPLAY, .color = RC_BLACK);
+                /* Cast: a ternary over two enumerators is an int, and C++
+                   refuses the narrowing into .font that C99 accepts. */
+                uint16_t face = (uint16_t)(tall ? F_DISPLAY_LG : F_DISPLAY);
+                rcText(v, .font = face, .color = RC_BLACK);
             }
-            /* 4-column button grid. */
-            rcRow(.w = "grow", .gap = 8) {
+            KEY_ROW(keySide) {
                 if (key("k7", "7")) calc_digit(st, 7);
                 if (key("k8", "8")) calc_digit(st, 8);
                 if (key("k9", "9")) calc_digit(st, 9);
                 if (key("kdiv", "\xc3\xb7")) calc_op(st, '/');
             }
-            rcRow(.w = "grow", .gap = 8) {
+            KEY_ROW(keySide) {
                 if (key("k4", "4")) calc_digit(st, 4);
                 if (key("k5", "5")) calc_digit(st, 5);
                 if (key("k6", "6")) calc_digit(st, 6);
                 if (key("kmul", "\xc3\x97")) calc_op(st, '*');
             }
-            rcRow(.w = "grow", .gap = 8) {
+            KEY_ROW(keySide) {
                 if (key("k1", "1")) calc_digit(st, 1);
                 if (key("k2", "2")) calc_digit(st, 2);
                 if (key("k3", "3")) calc_digit(st, 3);
-                if (key("ksub", "-")) calc_op(st, '-');
+                if (key("ksub", NULL)) calc_op(st, '-');
             }
-            rcRow(.w = "grow", .gap = 8) {
+            KEY_ROW(keySide) {
                 if (key("kclr", "C")) calc_clear(st);
                 if (key("k0", "0")) calc_digit(st, 0);
                 if (key("keq", "=")) calc_op(st, 0);
@@ -171,23 +233,20 @@ static void layout(RC_App *app, void *userData) {
     }
 }
 
-/* ── entry point ─────────────────────────────────────────────────────────── */
-
 int main(void) {
     AppState state = { .cur = 0 };
 
     static const float fontSizes[F_COUNT] = {
-        [F_BODY]    = 18.0f,
-        [F_DISPLAY] = 30.0f,
+        [F_BODY]       = 18.0f,
+        [F_DISPLAY]    = 30.0f,
+        /* Slot 0 is what every library widget draws its own text at, so a new
+           size goes on the END: reordering would resize the menus and title. */
+        [F_DISPLAY_LG] = 56.0f,
     };
 
-    /* Strict 1-bit monochrome: black on white. Built from Light so widgets
-       (menus, controls) inherit sane metrics, then flattened.
-       Note: .radius is an app-applied default (rc_theme.h: "metrics an app can
-       apply to its containers"), not something the widget layer reads - so
-       setting it to 0 does not square rcBeginMenu's chips, which carry the
-       widget layer's own corner. The square look here is the chrome this file
-       draws itself. */
+    /* Strict 1-bit monochrome, built from Light so the library widgets keep
+       sane metrics and then flattened. .radius = 0 squares EVERY widget - pills
+       and radio dots included - which is the whole period look in one field. */
     RC_Style mono   = rcStyleLight();
     mono.background = RC_WHITE;
     mono.surface    = RC_WHITE;
@@ -209,9 +268,9 @@ int main(void) {
         .scratchArenaBytes = 4096,   /* backs rcFormat (the display readout) */
         .nativeFrame    = true,
         .titlebarHeight = 22,
-        .titlebar       = { .custom = true },   /* we draw the System-1 bar ourselves */
-        .layoutCallback       = layout,
+        .layoutCallback = layout,
         .userData       = &state,
+        .titlebar       = { .custom = true },   /* we draw the System-1 bar ourselves */
     };
 
     return rcRunApp(&opts);

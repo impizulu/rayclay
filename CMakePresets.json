@@ -23,7 +23,7 @@
     },
     {
       "name": "web",
-      "displayName": "Web / WASM (emscripten; GLES3 -> WebGL2, every example -> its own page)",
+      "displayName": "Web / WASM (emscripten; GLES3 -> WebGL2, one page per example that has one)",
       "description": "Needs the Emscripten SDK ACTIVATED, not merely installed: `source /path/to/emsdk/emsdk_env.sh` sets $EMSDK, and this preset resolves the toolchain through it. Without that the configure fails on an unreadable toolchain file rather than on anything to do with RayClay.",
       "binaryDir": "${sourceDir}/build-web",
       "toolchainFile": "$env{EMSDK}/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake",

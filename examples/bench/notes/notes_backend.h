@@ -1,27 +1,16 @@
 /*
-================================================================================
-    notes_backend.h - the notes/blog app's non-GUI model + logic
-================================================================================
+    notes_backend.h - the notes app's model: a note/post store, a frozen text
+    corpus, a seeded PRNG and a fixed-step clock.
 
-    A header-only, raylib-style backend for the RayClay `notes` benchmark/showcase
-    app: the note/post store (CRUD over an in-memory model), a frozen text corpus,
-    a seeded PRNG, and a fixed-step clock. PURE C99 with ZERO RayClay
-    dependency, so it is reusable on its own and deterministic under a seed (no
-    wall-clock, no rand(), no file/network I/O at frame time - it takes a plain dt).
+    Pure C99, no RayClay dependency, deterministic under a seed: no wall clock,
+    no rand(), no I/O at frame time - it takes a plain dt. A note's body is an
+    array of paragraph strings, so the GUI wraps each paragraph as its own block
+    and the breaks are guaranteed. This header owns note_memzero, which keeps the
+    GUI free of <system> includes.
 
-    A note's BODY is an array of paragraph strings (a NoteBody), so the GUI renders
-    each paragraph as its own word-wrapped block - guaranteeing paragraph breaks
-    without relying on embedded '\n' handling, and keeping the wrap deterministic.
-
-    Usage (stb-style single implementation, in exactly one TU):
+    Single implementation, in exactly one TU:
         #define NOTES_BACKEND_IMPLEMENTATION
         #include "notes_backend.h"
-
-    This header owns note_memzero so the pure-RC_ GUI TU stays free of <system>
-    includes (the examples pure-RC_ contract).
-
-    Build target: rayclay_bench_notes
-================================================================================
 */
 #ifndef NOTES_BACKEND_H
 #define NOTES_BACKEND_H
@@ -37,6 +26,7 @@
 #define NOTE_MAX_NOTES        32
 #define NOTE_MAX_TAGS          4
 #define NOTE_TITLE_CAP        80
+#define NOTE_TAG_CAP          16
 #define NOTE_EPOCH_SECONDS 32400   /* 09:00:00 - a frozen origin, no wall clock */
 
 typedef enum { NOTE_DRAFT = 0, NOTE_PUBLISHED } NoteStatus;
@@ -51,8 +41,8 @@ typedef struct {
     char        title[NOTE_TITLE_CAP];   /* editable (overwritten in place)         */
     uint16_t    titleLen;
     const char *snippet;                 /* sidebar one-line preview (corpus const*) */
-    NoteBody    body;                    /* the large wrapped body (the B9 cost)     */
-    const char *tags[NOTE_MAX_TAGS];
+    NoteBody    body;                    /* the note's paragraphs                    */
+    char        tags[NOTE_MAX_TAGS][NOTE_TAG_CAP];  /* editable, via note_set_tags   */
     uint8_t     tagCount;
     uint8_t     status;                  /* NoteStatus                              */
     uint16_t    wordCount;               /* precomputed at seed                     */
@@ -78,19 +68,22 @@ static inline const Note *note_at(const NoteStore *s, int i) {
 }
 static inline int note_published_count(const NoteStore *s) { return s->publishedCount; }
 
-/* ========================================================================== */
 #ifdef NOTES_BACKEND_IMPLEMENTATION
 
 #include <string.h>
 
-/* The non-inline API is declared + defined only under IMPLEMENTATION, so a TU that
-   needs just the types + queries (main.c, the bench harness) never sees a bare
-   `static` prototype (-Werror=unused-function). Forward decls first. */
+/* Declared and defined only under IMPLEMENTATION, so a TU that includes this header
+   for the types alone never sees a static prototype it does not define. */
 NOTEDEF void note_memzero(void *p, size_t n);
 NOTEDEF void note_store_seed(NoteStore *s, unsigned seed);
 NOTEDEF void note_store_step(NoteStore *s, float dt);   /* dt <= 0 => no-op (freeze) */
 NOTEDEF void note_set_title(NoteStore *s, int i, const char *text, int len);
+NOTEDEF void note_set_tags(NoteStore *s, int i, const char *csv);
+NOTEDEF void note_tags_csv(const Note *n, char *out, int cap);
 NOTEDEF void note_publish(NoteStore *s, int i);
+NOTEDEF int  note_create(NoteStore *s);
+NOTEDEF bool note_matches(const Note *n, const char *query);
+NOTEDEF void note_elide(const char *src, char *out, int cap, int maxChars);
 NOTEDEF int  note_body_text(const Note *n, char *out, int cap);
 
 NOTEDEF void note_memzero(void *p, size_t n) { memset(p, 0, n); }
@@ -102,10 +95,7 @@ static uint32_t note__rng(NoteStore *s) {
     return (s->rng = x);
 }
 
-/* -- the frozen corpus (immutable, ASCII/Latin-1 only) ----------------------- */
-
-/* The long article = the benchmark's dominant glyph/measure/wrap cost (B9): the
-   note the scripted scenario selects renders this ~7-paragraph body every frame. */
+/* The frozen corpus: immutable, ASCII/Latin-1 only. */
 static const char *const NB__BODY_LONG[] = {
     "RayClay renders an entire application into a single canvas, so the thing you "
     "ship and the thing you benchmark are one and the same source. This note is the "
@@ -122,7 +112,7 @@ static const char *const NB__BODY_LONG[] = {
     "None of this reads a wall clock. Dates are stamped from a frozen epoch, word "
     "counts are precomputed once at seed time, and the reading estimate is a fixed "
     "width string, so no formatted value can change length and reflow the page.",
-    "Editing is no longer confined to single-line fields. The body below is a live "
+    "Editing is not confined to single-line fields. The body below is a live "
     "multi-line editor over a wrapped buffer - the one capability a note taking app "
     "really wants - so the write tab is a genuine text area, not a static preview.",
     "Everything else is here today: a sidebar of notes, a write and a preview tab, a "
@@ -258,9 +248,14 @@ NOTEDEF void note_store_seed(NoteStore *s, unsigned seed) {
         int doc = (i == 0 || i == 2) ? 0 : (i % 3 == 1 ? 1 : (i % 3 == 2 ? 2 : 1));
         nt->body.paras  = NB__DOCS[doc].paras;
         nt->body.nParas = NB__DOCS[doc].n;
-        nt->tagCount = (uint8_t)(1u + note__rng(s) % 3u);
-        for (int t = 0; t < nt->tagCount; t++)
-            nt->tags[t] = NB__TAGS[(i * 3 + t) % nTags];
+        nt->tagCount = (uint8_t)(2u + note__rng(s) % 3u);
+        for (int t = 0; t < nt->tagCount; t++) {
+            const char *src = NB__TAGS[(i * 3 + t) % nTags];
+            size_t      tg  = strlen(src);
+            if (tg >= NOTE_TAG_CAP) tg = NOTE_TAG_CAP - 1;
+            memcpy(nt->tags[t], src, tg);
+            nt->tags[t][tg] = '\0';
+        }
         nt->status = (uint8_t)((i % 3 == 0) ? NOTE_PUBLISHED : NOTE_DRAFT);
         if (nt->status == NOTE_PUBLISHED) s->publishedCount++;
         note__count_words(nt);
@@ -289,11 +284,126 @@ NOTEDEF void note_set_title(NoteStore *s, int i, const char *text, int len) {
     s->notes[i].titleLen   = (uint16_t)len;
 }
 
+/* Split a comma-separated list into the note's tag slots. Empty entries are
+   skipped and anything past NOTE_MAX_TAGS is dropped, so a run-on line cannot
+   grow the note. */
+NOTEDEF void note_set_tags(NoteStore *s, int i, const char *csv) {
+    Note *nt;
+    int   n = 0;
+
+    if (i < 0 || i >= s->count)
+        return;
+    nt = &s->notes[i];
+    for (int k = 0; k < NOTE_MAX_TAGS; k++)
+        nt->tags[k][0] = '\0';
+    while (csv && *csv && n < NOTE_MAX_TAGS) {
+        int len = 0, keep;
+
+        while (*csv == ' ' || *csv == ',')
+            csv++;
+        if (!*csv)
+            break;
+        while (csv[len] && csv[len] != ',')
+            len++;
+        keep = len;
+        while (keep > 0 && csv[keep - 1] == ' ')
+            keep--;
+        if (keep > NOTE_TAG_CAP - 1)
+            keep = NOTE_TAG_CAP - 1;
+        if (keep > 0) {
+            memcpy(nt->tags[n], csv, (size_t)keep);
+            nt->tags[n][keep] = '\0';
+            n++;
+        }
+        csv += len;
+    }
+    nt->tagCount = (uint8_t)n;
+}
+
+/* The note's tags as one editable line, which is the shape the Write tab edits. */
+NOTEDEF void note_tags_csv(const Note *n, char *out, int cap) {
+    int k = 0;
+    if (!out || cap <= 0)
+        return;
+    for (int t = 0; n && t < n->tagCount; t++) {
+        if (t && k < cap - 2) { out[k++] = ','; out[k++] = ' '; }
+        for (const char *c = n->tags[t]; *c && k < cap - 1; c++)
+            out[k++] = *c;
+    }
+    out[k] = '\0';
+}
+
 NOTEDEF void note_publish(NoteStore *s, int i) {
     if (i < 0 || i >= s->count || s->notes[i].status == NOTE_PUBLISHED)
         return;
     s->notes[i].status = NOTE_PUBLISHED;
     s->publishedCount++;
+}
+
+/* Append an empty draft and return its index, or -1 when the notebook is full. */
+NOTEDEF int note_create(NoteStore *s) {
+    static const char FRESH[] = "New note";
+    Note *nt;
+    int   i = s->count;
+
+    if (i >= NOTE_MAX_NOTES)
+        return -1;
+    nt = &s->notes[i];
+    note_memzero(nt, sizeof *nt);
+    memcpy(nt->title, FRESH, sizeof FRESH);
+    nt->titleLen = (uint16_t)(sizeof FRESH - 1);
+    nt->snippet  = "Nothing here yet.";
+    nt->status   = NOTE_DRAFT;
+    note__count_words(nt);              /* an empty body: 0 words, 1 min */
+    note__set_meta(nt);
+    note__set_date(nt, (5 + i) % 12, 1 + (i * 3) % 28);
+    s->count = i + 1;
+    return i;
+}
+
+/* Case-insensitive substring match over the title and the snippet. An empty
+   query matches everything, so an untouched search box filters nothing. */
+NOTEDEF bool note_matches(const Note *n, const char *query) {
+    if (!query || !query[0])
+        return true;
+    for (int f = 0; f < 2; f++) {
+        const char *hay = f ? n->snippet : n->title;
+        for (; hay && *hay; hay++) {
+            const char *a = hay, *b = query;
+            while (*b && ((*a | 32) == (*b | 32))) { a++; b++; }
+            if (!*b)
+                return true;
+        }
+    }
+    return false;
+}
+
+/* Copy `src` into `out`, capped at `maxChars`; a string that did not fit ends in
+   "..." so a clipped label reads as clipped rather than as a typo. */
+NOTEDEF void note_elide(const char *src, char *out, int cap, int maxChars) {
+    int len = 0, keep;
+
+    if (!out || cap <= 0)
+        return;
+    out[0] = '\0';
+    if (!src)
+        return;
+    if (maxChars > cap - 1)
+        maxChars = cap - 1;
+    while (src[len])
+        len++;
+    if (len <= maxChars) {
+        memcpy(out, src, (size_t)len);
+        out[len] = '\0';
+        return;
+    }
+    keep = maxChars > 3 ? maxChars - 3 : 0;
+    while (keep > 0 && src[keep - 1] == ' ')
+        keep--;
+    memcpy(out, src, (size_t)keep);
+    for (int i = 0; i < 3; i++)
+        out[keep + i] = '.';
+    out[keep + 3] = '\0';
 }
 
 /* Flatten a note's paragraph body into one editable buffer, paragraphs joined by a

@@ -1,30 +1,19 @@
 /*
-================================================================================
-    main.c - RayClay `trader`: the demo runner (showcase mode)
-================================================================================
+    main.c - RayClay `trader`: a markets terminal.
 
-    The thin desktop/web entry point for the trader benchmark/showcase app. It is
-    the ONLY translation unit that touches the RC_ runner (RC_App*): it opens a real
-    window with real clock + input, seeds the app once (lazily, so the renderer is
-    up), and drives the SAME pure core (trader_update / trader_layout) the benchmark
-    harness drives - only the clock/seed/input source differs (see trader_app.h).
-    The demo adds a floating perf HUD via trader_demo_chrome; the bench never runs it.
+    Shows: a custom titlebar, a three-pane desktop layout that folds to one pane
+    on a narrow window, a candlestick chart drawn from plain rcBox rects, a depth
+    ladder, a text input, a combo, a modal confirm dialog and a live theme switch.
 
-    Same source -> native desktop window AND web (cmake --preset web). Zero-asset:
-    the bundled font + procedural chrome + rect-drawn candlesticks, no files to ship.
-    Headless smoke: RAYCLAY_MAX_FRAMES=N -> opens, draws N frames, exits 0.
-
-    App #3 of the standardised production benchmark/showcase apps
-    (messenger -> notes -> trader -> platformer -> gallery -> opsdash).
-
-    Build target: rayclay_bench_trader
-================================================================================
+    Zero-asset: the bundled font plus procedural chrome, nothing to ship. Build
+    and run the rayclay_bench_trader target, or `cmake --preset web` for the
+    browser. RAYCLAY_MAX_FRAMES=N draws N frames headless and exits.
 */
 #include "trader_app.h"
 
 static void demo_update(RC_App *app, void *userData) {
     AppState *st = (AppState *)userData;
-    if (!st->seeded)                        /* seed once the renderer/GL is up */
+    if (!st->seeded)                        /* seed once the renderer is up */
         trader_seed(st, 0x517A7Eu);         /* a fixed demo seed */
     AppCtx ctx = app_demo_ctx(app);
     trader_update(st, &ctx);
@@ -35,6 +24,14 @@ static void demo_layout(RC_App *app, void *userData) {
     AppCtx ctx = app_demo_ctx(app);
     trader_layout(st, &ctx);
     trader_demo_chrome(st, &ctx);
+
+    /* THE SECOND LINE A RUNTIME THEME SWITCH NEEDS. The window's clear colour is a
+       snapshot taken at create, not a live link to the style, so without this the
+       old ground shows wherever the layout does not cover the window. Call it
+       unconditionally: it is change-gated inside the library, and guarding it on
+       your own "did the theme change" flag is wrong here, because the toggle is a
+       widget INSIDE the layout and flips after this frame's style is installed. */
+    rcWindowSetClearColor(rcAppMainWindow(app), rcGetStyle().background);
 }
 
 int main(void) {
@@ -49,7 +46,9 @@ int main(void) {
         [F_HERO]  = 52.0f,
     };
 
-    rcSetStyle(rcStyleDark());
+    /* the same palette trader_layout installs, so the window's clear colour is
+       already the ground the first painted frame will use */
+    rcSetStyle(trader_style(true));
 
     RC_AppOptions opts = {
         .width               = 1280,
@@ -58,22 +57,18 @@ int main(void) {
         .clearColor          = rcGetStyle().background,
         .fontSizes           = font_sizes,
         .fontCount           = F_COUNT,
-        .scratchArenaBytes   = 4096,      /* backs rcFormat in the demo HUD only */
-        .startLayoutElements = 8192,      /* the densest app: watchlist + book + ~48 candle rects */
+        .scratchArenaBytes   = 4096,      /* backs rcFormat in the demo readout only */
+        .startLayoutElements = 8192,      /* watchlist + book + candles, all at once  */
         .nativeFrame         = true,
-        .titlebarHeight      = 52,
-        .titlebar            = { .custom = true },   /* the topbar IS the titlebar */
-        .updateCallback            = demo_update,
-        .layoutCallback            = demo_layout,
+        .titlebarHeight      = TR_TOPBAR_H,
+        .updateCallback      = demo_update,
+        .layoutCallback      = demo_layout,
         .userData            = &state,
-        /* A live market feed advances on its own clock and the HUD reports FPS,
-           so this demo must draw every frame. RC_RENDER_ON_DEMAND is the
-           default and a self-animating app parks once the window goes idle.
-           A normal app should NOT copy this: stay on demand and call
-           rcAppRequestFrame() when your state changes (ex03, ex10), or
-           rcAppRequestFrameAfter() for a timed step (ex12) - that is what holds
-           an idle window at ~0 CPU. Only the DEMO runner is affected; the
-           headless bench harness injects a fixed dt and never calls rcRunApp. */
+        .titlebar            = { .custom = true },   /* the topbar IS the titlebar */
+        /* A live feed advances on its own clock, so this demo must draw every
+           frame. Most apps should NOT copy this: RC_RENDER_ON_DEMAND is the
+           default, and calling rcWindowRequestFrame() when your state changes is
+           what keeps an idle window at about zero CPU. */
         .renderMode          = RC_RENDER_CONTINUOUS,
     };
 

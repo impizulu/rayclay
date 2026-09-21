@@ -1,28 +1,17 @@
 /*
-================================================================================
-    trader_backend.h - the trading-sim app's non-GUI model + logic
-================================================================================
+    trader_backend.h - the market model and logic, with no RayClay in it at all.
 
-    A header-only, raylib-style backend for the RayClay `trader` benchmark/showcase
-    app: a seeded market of instruments (each with an OHLC candle series), an order
-    book, a portfolio of positions, and a fill log. PURE C99 with ZERO RayClay
-    dependency, deterministic under a seed (no wall-clock, no rand(), no file I/O).
+    A seeded market of instruments (each with an OHLC candle series), an order
+    book, a portfolio of positions and a fill log. Pure C99, deterministic under
+    a seed: no wall clock, no rand(), no file I/O.
 
-    ALL prices are integer CENTS (exact, machine-invariant - no float rounding drift).
-    Every DISPLAYED number is formatted by THIS backend into a fixed buffer on the
-    deterministic step (priceStr / changeStr / plStr / estCostStr / cashStr / book
-    levels), so the pure-RC_ GUI never calls rcFormat in its frozen core: a formatted
-    string is identical on every machine at any given frame. The prices walk during
-    warmup and PIN at the freeze (a dt <= 0 step is a strict no-op).
+    ALL prices are integer CENTS, so there is no float rounding drift, and every
+    number the UI shows is formatted HERE into a fixed buffer on the step. The
+    prices walk while the app runs and pin whenever dt <= 0.
 
-    Usage (stb-style single implementation, in exactly one TU):
-        #define TRADER_BACKEND_IMPLEMENTATION
-        #include "trader_backend.h"
-
-    This header owns tr_memzero so the pure-RC_ GUI TU stays free of <system> includes.
-
-    Build target: rayclay_bench_trader
-================================================================================
+    Single-header: define TRADER_BACKEND_IMPLEMENTATION in exactly one TU before
+    including it. That TU also gets tr_memzero, which is why the GUI file needs
+    no system header of its own.
 */
 #ifndef TRADER_BACKEND_H
 #define TRADER_BACKEND_H
@@ -54,8 +43,14 @@ typedef struct {
     int32_t   changeBps;                 /* (price-prevClose)*10000/prevClose (bps)   */
     int32_t   position;                  /* shares held (portfolio)                   */
     int32_t   avgCost;                   /* average cost basis, cents (for P/L)       */
+    /* The session range: the last candle's low/high WIDENED BY THE LIVE PRICE, so a
+       walked price can never sit outside the range that is drawn around it. */
+    int32_t   dayLow, dayHigh;
     char      priceStr[12];              /* precomputed "142.03" (zero-padded)        */
     char      changeStr[10];             /* precomputed "+1.23%" (signed, zero-padded)*/
+    char      changeAbsStr[12];          /* precomputed "+2.14" - the move in money   */
+    char      dayLowStr[12];             /* precomputed session low                   */
+    char      dayHighStr[12];            /* precomputed session high                  */
     char      plStr[16];                 /* precomputed signed P/L, e.g. "+1240.00"    */
     char      positionStr[12];           /* precomputed share count (signed if short) */
     TrCandle  candles[TR_MAX_CANDLES];
@@ -78,9 +73,11 @@ typedef struct {
     TrLevel      asks[TR_MAX_LEVELS];
     TrOrder      orders[TR_MAX_ORDERS];   /* fill log                                   */
     int32_t      orderCount;
+    int32_t      spread;                 /* best ask - best bid, cents                 */
+    char         spreadStr[12];          /* precomputed spread                         */
     int32_t      cash;                   /* portfolio cash, cents (can go negative)    */
-    char         cashStr[16];
-    char         estCostStr[16];         /* qty x price for the order form (see tr_set_qty) */
+    char         cashStr[20];            /* "$1,000,000.00" - a balance, so it is money */
+    char         estCostStr[20];         /* qty x price for the order form (see tr_set_qty) */
     int32_t      orderPx;                /* limit-price override, cents (0 = use the market)  */
     uint32_t     step;                   /* COUNT-driven live-tick counter (not wall clock) */
     uint32_t     rng;                    /* seed-time xorshift state                    */
@@ -94,14 +91,10 @@ static inline const TrInstrument *tr_at(const TrStore *s, int i) {
 static inline const TrInstrument *tr_selected(const TrStore *s) { return tr_at(s, s->selected); }
 static inline int                 tr_order_count(const TrStore *s) { return s->orderCount; }
 
-/* ========================================================================== */
 #ifdef TRADER_BACKEND_IMPLEMENTATION
 
 #include <string.h>
 
-/* The non-inline API is declared + defined only under IMPLEMENTATION, so a TU that
-   needs just the types + queries (main.c, the bench harness) never sees a bare
-   `static` prototype (-Werror=unused-function). Forward decls first. */
 TRDEF void tr_memzero(void *p, size_t n);
 TRDEF void tr_store_seed(TrStore *s, unsigned seed);
 TRDEF void tr_store_step(TrStore *s, float dt);   /* dt <= 0 => no-op (freeze) */
@@ -141,6 +134,38 @@ static int tr__fmt_cents(int32_t cents, char *out, int cap) {
     if (k < cap - 1) out[k++] = '.';
     if (k < cap - 1) out[k++] = (char)('0' + (frac / 10u) % 10u);   /* zero-padded tens */
     if (k < cap - 1) out[k++] = (char)('0' + frac % 10u);           /* ones             */
+    out[k] = '\0';
+    return k;
+}
+
+/* Cents with an EXPLICIT '+' on a gain. A number whose direction is carried by its
+   colour alone is unreadable to a colour-blind reader and invisible in a greyscale
+   screenshot, so every signed money value the GUI shows is formatted through here. */
+static int tr__fmt_signed_cents(int32_t cents, char *out, int cap) {
+    int k = 0;
+    if (cents > 0 && k < cap - 1)
+        out[k++] = '+';
+    return k + tr__fmt_cents(cents, out + k, cap - k);
+}
+
+/* Cents -> "$1,234,567.89". A BALANCE IS MONEY AND A PRICE IS A NUMBER: a six
+   figure cash line with no separators and no currency mark reads as debug output,
+   while a quote column reads better bare. So this is used for balances and costs
+   only, and tr__fmt_cents keeps the quotes and the ladder. */
+static int tr__fmt_money(int32_t cents, char *out, int cap) {
+    char digits[12];
+    int k = 0;
+    if (cents < 0 && k < cap - 1) out[k++] = '-';
+    uint32_t a = (uint32_t)(cents < 0 ? -(int64_t)cents : cents);
+    int n = tr__uint_str(a / 100u, digits, (int)sizeof digits);
+    if (k < cap - 1) out[k++] = '$';
+    for (int i = 0; i < n && k < cap - 1; i++) {
+        if (i && ((n - i) % 3) == 0 && k < cap - 1) out[k++] = ',';
+        out[k++] = digits[i];
+    }
+    if (k < cap - 1) out[k++] = '.';
+    if (k < cap - 1) out[k++] = (char)('0' + (a / 10u) % 10u);
+    if (k < cap - 1) out[k++] = (char)('0' + a % 10u);
     out[k] = '\0';
     return k;
 }
@@ -191,11 +216,21 @@ static void tr__fmt_instrument(TrInstrument *it) {
         it->changeBps = 0;
     }
     tr__fmt_bps(it->changeBps, it->changeStr, (int)sizeof it->changeStr);
+    tr__fmt_signed_cents(it->price - it->prevClose, it->changeAbsStr,
+                         (int)sizeof it->changeAbsStr);
+    /* The session range, from the newest candle, widened by the live price: the
+       price walks between candle rebuilds, so a range taken from the candle alone
+       would put the marker outside its own track. */
+    const TrCandle *last = &it->candles[TR_MAX_CANDLES - 1];
+    it->dayLow  = (last->low  < it->price) ? last->low  : it->price;
+    it->dayHigh = (last->high > it->price) ? last->high : it->price;
+    tr__fmt_cents(it->dayLow,  it->dayLowStr,  (int)sizeof it->dayLowStr);
+    tr__fmt_cents(it->dayHigh, it->dayHighStr, (int)sizeof it->dayHighStr);
     /* unrealized P/L = position * (price - avgCost), cents (signed). */
     int64_t pl = (int64_t)it->position * (it->price - it->avgCost);
     if (pl > 2000000000LL)  pl = 2000000000LL;      /* clamp the display buffer, never overflow */
     if (pl < -2000000000LL) pl = -2000000000LL;
-    tr__fmt_cents((int32_t)pl, it->plStr, (int)sizeof it->plStr);
+    tr__fmt_signed_cents((int32_t)pl, it->plStr, (int)sizeof it->plStr);
     /* share count (signed: a short position shows a leading '-') */
     int pk = 0;
     if (it->position < 0 && pk < (int)sizeof it->positionStr - 1)
@@ -211,6 +246,8 @@ static void tr__rebuild_book(TrStore *s) {
     if (!it) {
         tr_memzero(s->bids, sizeof s->bids);
         tr_memzero(s->asks, sizeof s->asks);
+        s->spread = 0;
+        tr__fmt_cents(0, s->spreadStr, (int)sizeof s->spreadStr);
         return;
     }
     int32_t tickSz = it->price / 500 + 1;            /* a price-proportional level step, >= 1 */
@@ -227,6 +264,9 @@ static void tr__rebuild_book(TrStore *s) {
         tr__uint_str((uint32_t)s->bids[i].size, s->bids[i].sizeStr, (int)sizeof s->bids[i].sizeStr);
         tr__uint_str((uint32_t)s->asks[i].size, s->asks[i].sizeStr, (int)sizeof s->asks[i].sizeStr);
     }
+    /* the top-of-book spread, the one number a depth ladder exists to tell you */
+    s->spread = s->asks[0].price - s->bids[0].price;
+    tr__fmt_cents(s->spread, s->spreadStr, (int)sizeof s->spreadStr);
 }
 
 TRDEF void tr_store_seed(TrStore *s, unsigned seed) {
@@ -281,8 +321,8 @@ TRDEF void tr_store_seed(TrStore *s, unsigned seed) {
         tr__fmt_instrument(it);
     }
 
-    tr__fmt_cents(s->cash, s->cashStr, (int)sizeof s->cashStr);
-    tr__fmt_cents(0, s->estCostStr, (int)sizeof s->estCostStr);
+    tr__fmt_money(s->cash, s->cashStr, (int)sizeof s->cashStr);
+    tr__fmt_money(0, s->estCostStr, (int)sizeof s->estCostStr);
     tr__rebuild_book(s);
 }
 
@@ -322,7 +362,7 @@ TRDEF void tr_set_qty(TrStore *s, int qty) {
     int32_t px = s->orderPx > 0 ? s->orderPx : (it ? it->price : 0);
     int64_t cost = (int64_t)qty * px;
     if (cost > 2000000000LL) cost = 2000000000LL;     /* clamp the display buffer */
-    tr__fmt_cents((int32_t)cost, s->estCostStr, (int)sizeof s->estCostStr);
+    tr__fmt_money((int32_t)cost, s->estCostStr, (int)sizeof s->estCostStr);
 }
 
 TRDEF void tr_place_order(TrStore *s, TrSide side, int qty) {
@@ -347,7 +387,7 @@ TRDEF void tr_place_order(TrStore *s, TrSide side, int qty) {
     if (cash >  2000000000LL) cash =  2000000000LL;
     if (cash < -2000000000LL) cash = -2000000000LL;
     s->cash = (int32_t)cash;
-    tr__fmt_cents(s->cash, s->cashStr, (int)sizeof s->cashStr);
+    tr__fmt_money(s->cash, s->cashStr, (int)sizeof s->cashStr);
     tr__fmt_instrument(it);
 
     /* record a precomputed fill line "BUY 100 AAPL @ 142.03" */

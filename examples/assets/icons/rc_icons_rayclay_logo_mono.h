@@ -12,6 +12,7 @@ static inline void rcDrawIconRayClayLogoMono(RC_BoundingBox bounds,
                                              const void *userData) {
     (void)userData;
     const float viewBox = 731.429f;
+    const float stroke  = 34.0f;
 
     static const RC_IconPoint path0[] = {
         { 174.754f, 339.714f },
@@ -53,7 +54,7 @@ static inline void rcDrawIconRayClayLogoMono(RC_BoundingBox bounds,
     };
     rcIconDrawPolyline(bounds, path0,
                        (int)(sizeof(path0) / sizeof(path0[0])),
-                       viewBox, 34.0f, false, color);
+                       viewBox, stroke, false, color);
 
     static const RC_IconPoint path1[] = {
         { 174.754f, 339.714f },
@@ -76,7 +77,7 @@ static inline void rcDrawIconRayClayLogoMono(RC_BoundingBox bounds,
     };
     rcIconDrawPolyline(bounds, path1,
                        (int)(sizeof(path1) / sizeof(path1[0])),
-                       viewBox, 34.0f, false, color);
+                       viewBox, stroke, false, color);
 
     static const RC_IconPoint path2[] = {
         { 174.754f, 339.714f },
@@ -115,7 +116,7 @@ static inline void rcDrawIconRayClayLogoMono(RC_BoundingBox bounds,
     };
     rcIconDrawPolyline(bounds, path2,
                        (int)(sizeof(path2) / sizeof(path2[0])),
-                       viewBox, 34.0f, false, color);
+                       viewBox, stroke, false, color);
 
     static const RC_IconPoint path3[] = {
         { 556.674f, 339.714f },
@@ -154,7 +155,7 @@ static inline void rcDrawIconRayClayLogoMono(RC_BoundingBox bounds,
     };
     rcIconDrawPolyline(bounds, path3,
                        (int)(sizeof(path3) / sizeof(path3[0])),
-                       viewBox, 34.0f, false, color);
+                       viewBox, stroke, false, color);
 
     static const RC_IconPoint path4[] = {
         { 248.714f, 509.714f },
@@ -177,12 +178,12 @@ static inline void rcDrawIconRayClayLogoMono(RC_BoundingBox bounds,
     };
     rcIconDrawPolyline(bounds, path4,
                        (int)(sizeof(path4) / sizeof(path4[0])),
-                       viewBox, 34.0f, false, color);
+                       viewBox, stroke, false, color);
 
-    rcIconDrawCircleStroke(bounds, 73.714f, 178.714f, 30.0f, viewBox, 2.0f, color);
-    rcIconDrawCircleStroke(bounds, 657.714f, 178.714f, 30.0f, viewBox, 2.0f, color);
-    rcIconDrawCircleStroke(bounds, 307.714f, 444.714f, 27.0f, viewBox, 2.0f, color);
-    rcIconDrawCircleStroke(bounds, 457.714f, 444.714f, 27.0f, viewBox, 2.0f, color);
+    rcIconDrawFilledCircle(bounds, 73.714f, 178.714f, 30.0f, viewBox, color);
+    rcIconDrawFilledCircle(bounds, 657.714f, 178.714f, 30.0f, viewBox, color);
+    rcIconDrawFilledCircle(bounds, 307.714f, 444.714f, 27.0f, viewBox, color);
+    rcIconDrawFilledCircle(bounds, 457.714f, 444.714f, 27.0f, viewBox, color);
 }
 
 static inline void rcIconRayClayLogoMono(float size, RC_Color color) {

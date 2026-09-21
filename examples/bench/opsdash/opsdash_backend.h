@@ -1,41 +1,16 @@
 /*
-================================================================================
-    opsdash_backend.h - the ops-dashboard app's non-GUI model
-================================================================================
+    opsdash_backend.h - the dashboard's model: 48 services with fixed metadata,
+    plus a live telemetry band (a latency ring, a request counter, an incident
+    timer).
 
-    A header-only, raylib-style backend for the RayClay `opsdash` benchmark/showcase
-    app: a fleet of 48 services with fixed metadata, plus a small live telemetry
-    band (a latency sparkline ring, a rolling request counter, an incident timer).
-    PURE C99 with ZERO RayClay dependency, deterministic (no wall-clock, no rand(),
-    no I/O).
+    Pure C99, no RayClay dependency, deterministic: no wall clock, no rand(), no
+    I/O. ops_seed() fills the inventory; ops_tick() advances ONLY the live band,
+    and only when dt > 0. Every displayed number is preformatted here into a
+    fixed buffer, so the GUI never needs a format arena.
 
-    THE SPLIT IS THE POINT. This app exists to be a PARTIALLY-STATIC scene, so the
-    model is deliberately cut in two:
-
-      ops_seed()  fills the INVENTORY - 48 services and every string that describes
-                  them. Nothing after seeding ever writes it again.
-      ops_tick()  advances ONLY the telemetry band, and ONLY when dt > 0.
-
-    So a frame re-declares a large unchanged subtree next to a small changing one,
-    which is the shape the render-only static-island experiment (L1) needs a subject
-    for. With ctx->dt == 0 the telemetry stops too and the whole scene is static -
-    the same binary is therefore both the experiment and its own ceiling arm, with no
-    second app and no build flag to get them apart.
-
-    Every DISPLAYED number is formatted by THIS backend into a fixed buffer, so the
-    pure-RC_ GUI never calls rcFormat in its frozen core - a string is identical on
-    every machine at any frame, and the arena-less bench core never dereferences a
-    NULL arena.
-
-    Usage (stb-style single implementation, in exactly one TU):
+    Single implementation, in exactly one TU:
         #define OPSDASH_BACKEND_IMPLEMENTATION
         #include "opsdash_backend.h"
-
-    This header owns ops_memzero so the pure-RC_ GUI TU stays free of <system>
-    includes.
-
-    Build target: rayclay_bench_opsdash
-================================================================================
 */
 #ifndef OPSDASH_BACKEND_H
 #define OPSDASH_BACKEND_H
@@ -48,9 +23,11 @@
 #define OPSDEF static
 #endif
 
-#define OPS_SVC_COUNT    48    /* the static inventory - the large unchanged subtree */
-#define OPS_GROUP_COUNT   8    /* left-nav groups; every service belongs to exactly one */
-#define OPS_SPARK_COUNT  24    /* telemetry ring: the small changing subtree */
+#define OPS_SVC_COUNT    48    /* the service inventory */
+#define OPS_GROUP_COUNT   8    /* left-nav groups; every service is in exactly one */
+#define OPS_SPARK_COUNT  24    /* the latency ring: one sample per second */
+#define OPS_REGION_COUNT  4
+#define OPS_TOP_COUNT     5    /* the rail's slowest-services board */
 #define OPS_NAME_CAP     24
 #define OPS_NUM_CAP      12
 
@@ -62,6 +39,7 @@ typedef struct {
     char     owner[OPS_NAME_CAP];
     char     rps[OPS_NUM_CAP];      /* steady-state request rate, e.g. "1.2k" */
     char     p99[OPS_NUM_CAP];      /* steady-state p99 latency, e.g. "84 ms" */
+    uint16_t p99Ms;                 /* the same latency as a number, for ranking */
     uint8_t  group;                 /* 0..OPS_GROUP_COUNT-1 */
     uint8_t  region;                /* index into OPS_REGIONS */
     uint8_t  tier;                  /* 1..3; tier 1 is customer-facing */
@@ -79,29 +57,52 @@ typedef struct {
     char     reqText[OPS_NUM_CAP];   /* reqTotal, formatted */
     char     p99Text[OPS_NUM_CAP];   /* newest spark sample, formatted "NN ms" */
     char     upText[OPS_NUM_CAP];    /* incidentSecs, formatted "MM:SS" */
+    /* The ring's own range, so the sparkline can state the scale it is drawn at
+       instead of leaving the reader to guess. */
+    uint8_t  sparkLo, sparkHi;
+    char     loText[OPS_NUM_CAP];
+    char     hiText[OPS_NUM_CAP];
 } OpsLive;
 
 typedef struct {
     OpsService svc[OPS_SVC_COUNT];
     OpsLive    live;
+    /* The grid's draw order: service indices, worst health first. Seeded and never
+       written again, exactly like the health it reads, so the inventory stays the
+       unchanged subtree this app exists to be. */
+    uint8_t    order[OPS_SVC_COUNT];
     uint8_t    groupHealth[OPS_GROUP_COUNT]; /* max health per group; seeded, static */
     uint16_t   groupCount[OPS_GROUP_COUNT];  /* services per group; seeded, static */
+    /* Fleet roll-up for the summary row. Seeded and static like the health it counts,
+       and preformatted here because the frozen core calls no rcFormat and has no
+       arena to format into: the strings must already exist by the time it draws. */
+    uint16_t   healthCount[OPS_HEALTH_COUNT];
+    char       healthText[OPS_HEALTH_COUNT][OPS_NUM_CAP];
+    char       totalText[OPS_NUM_CAP];
+    /* Two more seeded roll-ups the panes read: services per region, and the
+       OPS_TOP_COUNT slowest services worst first. */
+    uint16_t   regionCount[OPS_REGION_COUNT];
+    char       regionText[OPS_REGION_COUNT][OPS_NUM_CAP];
+    uint8_t    topLatency[OPS_TOP_COUNT];
     uint32_t   rng;
 } OpsStore;
 
-OPSDEF const char *const OPS_REGIONS[4] = { "us-east", "us-west", "eu-west", "ap-south" };
+OPSDEF const char *const OPS_REGIONS[OPS_REGION_COUNT] = {
+    "us-east", "us-west", "eu-west", "ap-south",
+};
+/* The titlebar's scope filters. Index 0 is "everything", so a plain rcCombo over
+   these is a filter with an off position and needs no second control. */
+OPSDEF const char *const OPS_REGION_FILTER[OPS_REGION_COUNT + 1] = {
+    "All regions", "us-east", "us-west", "eu-west", "ap-south",
+};
+OPSDEF const char *const OPS_TIER_FILTER[4] = { "All tiers", "T1", "T2", "T3" };
 OPSDEF const char *const OPS_GROUPS[OPS_GROUP_COUNT] = {
     "Edge",  "Identity", "Payments", "Catalog",
     "Search", "Media",   "Analytics", "Platform",
 };
 
-/* ============================================================================
-   The non-inline API is declared + defined ONLY under OPSDASH_BACKEND_IMPLEMENTATION,
-   so the TU that merely INCLUDES this header (the thin main.c runner) never sees a
-   static-declared-but-undefined prototype and trips -Werror=unused-function. The GUI
-   TU defines IMPLEMENTATION and calls them. Warning: moving these three lines above
-   the guard compiles fine and warns three times in main.c - measured, not assumed.
-   ============================================================================ */
+/* Declared and defined only under IMPLEMENTATION, so a TU that includes this header
+   for the types alone never sees a static prototype it does not define. */
 #ifdef OPSDASH_BACKEND_IMPLEMENTATION
 
 #include <string.h>
@@ -168,14 +169,29 @@ static void ops__clock(char *dst, size_t cap, uint32_t secs) {
     dst[at < cap ? at : cap - 1] = '\0';
 }
 
+/* The ring's low and high sample, and their labels. A sparkline scaled 0-100 turns
+   a live series into a flat picket fence, so the GUI scales to this range instead
+   and prints it beside the bars. */
+static void ops__range(OpsLive *l) {
+    uint8_t lo = l->spark[0], hi = l->spark[0];
+    for (int i = 1; i < OPS_SPARK_COUNT; i++) {
+        if (l->spark[i] < lo) lo = l->spark[i];
+        if (l->spark[i] > hi) hi = l->spark[i];
+    }
+    l->sparkLo = lo;
+    l->sparkHi = hi;
+    ops__ms(l->loText, OPS_NUM_CAP, lo);
+    ops__ms(l->hiText, OPS_NUM_CAP, hi);
+}
+
 static void ops__copy(char *dst, size_t cap, const char *src) {
     size_t i = 0;
     while (src[i] && i + 1 < cap) { dst[i] = src[i]; i++; }
     dst[i] = '\0';
 }
 
-/* Service names are built from a noun x suffix table rather than a 48-entry literal
-   list: it keeps the fleet legible and lets OPS_SVC_COUNT move without a second edit. */
+/* Names are built from a noun x suffix table rather than a 48-entry literal list, so
+   OPS_SVC_COUNT can move without a second edit. */
 static const char *const OPS__NOUN[12] = {
     "gateway", "auth",    "ledger",  "catalog",
     "search",  "media",   "metrics", "scheduler",
@@ -211,12 +227,54 @@ OPSDEF void ops_seed(OpsStore *s, unsigned seed) {
         sv->health = (uint8_t)(r < 78u ? OPS_OK : (r < 96u ? OPS_WARN : OPS_DOWN));
 
         ops__rate(sv->rps, OPS_NUM_CAP, 40u + (ops__rand(&s->rng) % 9000u));
-        ops__ms  (sv->p99, OPS_NUM_CAP, 8u + (ops__rand(&s->rng) % 240u));
+        sv->p99Ms = (uint16_t)(8u + (ops__rand(&s->rng) % 240u));
+        ops__ms  (sv->p99, OPS_NUM_CAP, sv->p99Ms);
 
+        s->regionCount[sv->region & (OPS_REGION_COUNT - 1)]++;
         s->groupCount[sv->group]++;
         if (sv->health > s->groupHealth[sv->group])
             s->groupHealth[sv->group] = sv->health;
+        if (sv->health < OPS_HEALTH_COUNT)
+            s->healthCount[sv->health]++;
     }
+
+    /* FAILURES FIRST. Three severity passes over the inventory, each keeping index
+       order within its band, so the result is stable and the same on every machine.
+       An operator reading a wall of 48 cards should never have to hunt the three
+       that are down; putting them at the top is what a status page does. */
+    {
+        int n = 0;
+        for (int h = OPS_HEALTH_COUNT - 1; h >= 0; h--)
+            for (int i = 0; i < OPS_SVC_COUNT; i++)
+                if (s->svc[i].health == (uint8_t)h)
+                    s->order[n++] = (uint8_t)i;
+    }
+
+    /* The slowest OPS_TOP_COUNT services, worst first: a selection sort over a
+       scratch copy, which is exact and needs no comparator. */
+    {
+        uint16_t best;
+        bool     taken[OPS_SVC_COUNT];
+        for (int i = 0; i < OPS_SVC_COUNT; i++)
+            taken[i] = false;
+        for (int k = 0; k < OPS_TOP_COUNT; k++) {
+            int pick = 0;
+            best = 0;
+            for (int i = 0; i < OPS_SVC_COUNT; i++)
+                if (!taken[i] && s->svc[i].p99Ms >= best) {
+                    best = s->svc[i].p99Ms;
+                    pick = i;
+                }
+            taken[pick]       = true;
+            s->topLatency[k]  = (uint8_t)pick;
+        }
+    }
+
+    for (int i = 0; i < OPS_HEALTH_COUNT; i++)
+        ops__rate(s->healthText[i], OPS_NUM_CAP, s->healthCount[i]);
+    for (int i = 0; i < OPS_REGION_COUNT; i++)
+        ops__rate(s->regionText[i], OPS_NUM_CAP, s->regionCount[i]);
+    ops__rate(s->totalText, OPS_NUM_CAP, (uint32_t)OPS_SVC_COUNT);
 
     for (int i = 0; i < OPS_SPARK_COUNT; i++)
         s->live.spark[i] = (uint8_t)(30u + (ops__rand(&s->rng) % 40u));
@@ -226,11 +284,11 @@ OPSDEF void ops_seed(OpsStore *s, unsigned seed) {
     ops__rate (s->live.reqText, OPS_NUM_CAP, s->live.reqTotal);
     ops__ms   (s->live.p99Text, OPS_NUM_CAP, s->live.spark[OPS_SPARK_COUNT - 1]);
     ops__clock(s->live.upText,  OPS_NUM_CAP, 0u);
+    ops__range(&s->live);
 }
 
-/* Advance ONLY the live band. dt == 0 is the freeze: it returns before touching
-   anything, so a dt-0 run re-declares a byte-identical scene every frame. That is
-   what makes this app its own static-island ceiling arm. */
+/* Advance ONLY the live band. dt <= 0 is the freeze: it returns before touching
+   anything, so the scene stands still. */
 OPSDEF void ops_tick(OpsStore *s, float dt) {
     if (dt <= 0.0f) return;
 
@@ -260,6 +318,7 @@ OPSDEF void ops_tick(OpsStore *s, float dt) {
         ops__rate (s->live.reqText, OPS_NUM_CAP, s->live.reqTotal);
         ops__ms   (s->live.p99Text, OPS_NUM_CAP, s->live.spark[OPS_SPARK_COUNT - 1]);
         ops__clock(s->live.upText,  OPS_NUM_CAP, s->live.incidentSecs);
+        ops__range(&s->live);
     }
 }
 

@@ -1,29 +1,11 @@
 /*
-================================================================================
-    trader_app.h - the trader app CONTRACT (declarations only)
-================================================================================
+    trader_app.h - the app's contract: types and prototypes only, so it includes
+    cleanly from C and from C++.
 
-    The single header both drivers include:
-      * the DEMO runner (main.c) - a real window, real clock, real input;
-      * the BENCH harness (the test/ suite) - includes THIS header for the
-        symbols, links trader_app.c as a C object, drives it with a fixed dt + seed
-        + synthetic input under the capture seam.
-
-    It declares ONLY types + prototypes (no RayClay DSL, no libc), so it is clean
-    to include from C AND C++ - the app is consumed as a linkable object.
-
-    ONE SOURCE, TWO MODES (the benchmark/showcase duality): the pure core
-    (trader_seed/update/layout) runs identically in both modes; only the
-    clock/seed/input SOURCE differs, and trader_demo_chrome adds a demo-only overlay.
-    The app is a stock-trading terminal: a dense watchlist, an instrument detail with
-    a big price ticker + a candlestick chart + an order book, an order form + confirm
-    dialog, and a positions table. Its dominant cost (B9) is HIGH ELEMENT COUNT (dense
-    tickers/grids + ~48 candlestick rects) + gradient/shadow fill + frequent numeric
-    relayout - a distinct cost path from messenger (many-small-runs) and notes
-    (one-large-wrapped-body).
-
-    Build target: rayclay_bench_trader
-================================================================================
+    Two drivers share it: main.c, which opens a real window, and a headless
+    harness that feeds the same core a fixed dt, a fixed seed and synthetic
+    input. The core runs identically either way - only the SOURCE of the clock,
+    the seed and the input differs.
 */
 #ifndef TRADER_APP_H
 #define TRADER_APP_H
@@ -31,22 +13,23 @@
 #include "bench_app.h"        /* the shared AppCtx / AppInputSink / AppMode contract */
 #include "trader_backend.h"   /* TrStore, embedded by value in AppState              */
 
-/* The frozen bench scenario's version. Bump ONLY when the scripted path's rendered
-   output changes. the bench harness emits it in the trend marker "SCENE trader vN". */
-#define TRADER_BENCH_VERSION 2
+/* Bump ONLY when the scripted path's rendered output changes. */
+#define TRADER_BENCH_VERSION 5
 
-/* Font ladder - baked from the bundled face. F_HERO=52 is the big price ticker: it
-   exercises the crisp-text-PERSISTS path (a large heading must stay crisp at 2x+ HiDPI
-   / zoom and NEVER vanish - owner priority; the atlas overflow HOLDS the last scale). */
+/* The titlebar's height. main.c pins the window's drag strip to it and the layout
+   measures the body against it, so the two must be one number. */
+#define TR_TOPBAR_H 52
+
+/* Font ladder, baked from the bundled face. F_HERO = 52 is the big price ticker:
+   a large heading has to stay crisp at 2x HiDPI or zoom. */
 typedef enum { F_SMALL = 0, F_BODY, F_MD, F_HEAD, F_TITLE, F_HERO, F_COUNT } TradeFont;
 
-/* App state - a FLAT, memset-able POD blob, so trader_seed can memset-then-set and
-   the bench harness's run-twice determinism gate holds. The selected instrument lives in the
-   store (tr_select / tr_selected), not here. */
+/* App state - a flat, memset-able blob, so trader_seed can zero it and rebuild.
+   The selected instrument lives in the store, not here. */
 typedef struct {
     TrStore store;           /* the backend, BY VALUE (the seed's memset zeroes it)   */
     int   navTab;            /* nav rail: 0 markets / 1 portfolio (switches the body)  */
-    int   watchFilter;       /* watchlist pills: 0 All / 1 Gainers / 2 Losers (REAL)  */
+    int   watchFilter;       /* watchlist pills: 0 All / 1 Gainers / 2 Losers         */
     int   tf;                /* chart timeframe tab 0..3 (reslices the candle window) */
     int   orderSide;         /* TR_BUY / TR_SELL (segmented toggle)                   */
     int   orderType;         /* 0 Market / 1 Limit (combo)                            */
@@ -57,15 +40,22 @@ typedef struct {
     bool  modalSettings;     /* the settings dialog (mutually exclusive)              */
     bool  darkMode;          /* theme toggle                                          */
     bool  confirmDialogs;    /* settings toggle: gate the confirm dialog on Place order */
+    /* Whether a narrow window is showing the detail PAGE or the list. It is not the
+       selection - the store always holds one, so the wide arm's panes are never
+       empty - and the wide arm ignores it. One bool per idea, so the app cannot
+       open on the wrong screen. */
+    bool  detailOpen;
     bool  seeded;            /* demo lazy-init guard                                  */
 } AppState;
 
-/* The four-function app contract (+ the demo-only chrome). No RC_App / window handle;
-   the input seam is the shared AppInputSink (bench_app.h). */
-void trader_seed  (AppState *st, unsigned seed);              /* = bench_seed: memset then build */
-void trader_update(AppState *st, const AppCtx *ctx);         /* advance market by ctx->dt; push qty */
-void trader_layout(AppState *st, const AppCtx *ctx);        /* the FROZEN core UI (both modes) */
-void trader_demo_chrome(AppState *st, const AppCtx *ctx);   /* demo-only overlay (never in bench) */
-void trader_bench_step(AppState *st, const AppInputSink *in, int frame); /* bench-only script */
+/* The app's palette, dark and light. trader_layout installs it every frame; the
+   demo runner reads it for the window's clear colour, painted before any layout. */
+RC_Style trader_style(bool dark);
+
+void trader_seed  (AppState *st, unsigned seed);            /* memset then build      */
+void trader_update(AppState *st, const AppCtx *ctx);        /* advance the market      */
+void trader_layout(AppState *st, const AppCtx *ctx);        /* the UI, both modes      */
+void trader_demo_chrome(AppState *st, const AppCtx *ctx);   /* demo-only overlay       */
+void trader_bench_step(AppState *st, const AppInputSink *in, int frame);
 
 #endif /* TRADER_APP_H */
