@@ -6,6 +6,14 @@ Build a GUI in C and ship it on every desktop OS **and** the web, from one sourc
 > components / props / state / utility classes onto RayClay and flags the one C rule (string lifetimes)
 > that trips up JS developers.
 
+> **What you have in front of you, so a cross-reference never sends you looking for a file you were
+> never given.** The RayClay drop is `rayclay.h` - the whole library, one header - plus these nine
+> pages and the two vendored window hosts. **It does not include `examples/`.** These pages name
+> example programs often, because they are where a pattern is worked end to end, and a name like
+> `examples/ex20_system_monitor` is a pointer into a separate checkout rather than a path beside
+> this file. Every page is written to answer its own question without one; where an example is the
+> only place a full pattern lives, that is a gap in the page and worth telling us about.
+
 ## 1. The whole app, in two lines
 
 ```c
@@ -14,9 +22,10 @@ Build a GUI in C and ship it on every desktop OS **and** the web, from one sourc
 int main(void) { return rcRunApp(NULL); }
 ```
 
-That opens a window with a centred **"Welcome to RayClay"** / **"This is your blank canvas."** on the
-RayClay-dark background (two lines; the subtitle is muted). No renderer wiring, no asset files (the
-font is bundled), no `#ifdef`. This program is checked in as
+That opens a window with the welcome canvas on the RayClay-dark background: a small "RC" mark, a
+centred **"Welcome to RayClay"** with a muted version chip beside it, **"This is your blank canvas."**,
+and the one line that tells you what to edit next (`Set RC_AppOptions.layoutCallback to draw your own
+UI.`). No renderer wiring, no asset files (the font is bundled), no `#ifdef`. This program is checked in as
 [`examples/ex00_hello/hello.c`](https://github.com/impizulu/rayclay/blob/examples/examples/ex00_hello/hello.c).
 
 It also writes one line to stderr, and that line is not a mistake on your part:
@@ -29,9 +38,12 @@ Set RC_AppOptions.layoutCallback to draw your own UI.
 The canvas is a **stand-in for the UI you have not written yet**, and RayClay says so rather than
 quietly producing content you did not author. It goes away the moment you set `.layoutCallback`.
 
-> **`rcRunApp` is the only way to open a window, and you have already met it.** Everything that
-> follows in this guide configures it by passing options instead of `NULL`; there is no second
-> entry point to graduate to, and nothing above needs rewriting when you outgrow it.
+> **`rcRunApp` is the entry point this guide uses throughout, and you have already met it.**
+> Everything that follows configures it by passing options instead of `NULL`, and nothing above
+> needs rewriting when you outgrow it. **One lower-level way in exists and this page needs it not
+> at all: `rcAppCreate` / `rcRunFrame` / `rcAppDestroy`, for a host that must own the frame loop.**
+> `rcInitWindow` is not a second one - it mints an ownerless L1 window and an `rcRunApp`
+> application must never call it.
 > Because this program contains none of *your* code, it also separates a broken toolchain from a
 > broken layout: if this window does not appear, the problem is your compiler, linker, GPU driver
 > or emsdk.
@@ -46,11 +58,30 @@ quietly producing content you did not author. It goes away the moment you set `.
 ```cmake
 add_subdirectory(rayclay)                      # vendored (git submodule or copy)
 add_executable(myapp main.c)
-target_link_libraries(myapp PRIVATE rayclay)   # GLFW, sokol, Clay, stb come with it
+target_link_libraries(myapp PRIVATE rayclay)   # window host, sokol, Clay, stb come with it
 ```
 
 One link line pulls in everything. **`FetchContent` works today**: `FetchContent_MakeAvailable()` resolves
 to exactly this `add_subdirectory`, so you can pull RayClay straight from a git tag without vendoring it.
+
+> **If you took the single-header drop instead, know what it is: declarations, and nothing else.**
+> The distributed `rayclay.h` is *generated* - around 94,000 lines and 3.8 MB of amalgamated source -
+> and the amalgamator strips prose by design. **The load-bearing figures are the zeros, and they are
+> exact:** the artifact a consumer receives holds **0 `/**` blocks, 0 `@param` and 0 `@brief`**,
+> where the source header it was built from carries three hundred doc blocks. The line and block
+> counts drift every time the library grows, so re-derive rather than quote them -
+> `grep -c '/\*\*' rayclay.h` on either file answers it in one command, and that command is the one
+> to trust over any number written in prose, including this one.
+> So opening the shipped file and finding no comment beside a function is not a gap in the
+> documentation; it is the file doing what it is meant to. **`docs/` is the reference, and the header
+> is not a substitute for it.** Two practical consequences:
+>
+> - A rule that has to survive into the artifact is written as a `#error` or `static_assert` MESSAGE,
+>   or into an IDENTIFIER. Those are string literals and names, and they survive; a comment does not.
+> - **A name is your only in-file signal.** `RC_`/`rc` is the public surface; `rci_`/`RCI_` is
+>   internal, and a handful of those carry `RC_API` only so the public macros have something your
+>   translation unit can link - see [api-notes](api-notes.md) under `rcComponent`. Being linkable is
+>   not an invitation, and the comment that says so is one of the ones that got stripped.
 
 > **Setting a build knob? It goes on the RayClay target, not on yours, and putting it on yours is
 > silent.** With `add_subdirectory`/`FetchContent`, RayClay compiles its implementation in its own
@@ -78,8 +109,30 @@ to exactly this `add_subdirectory`, so you can pull RayClay straight from a git 
 > set_target_properties(myapp PROPERTIES C_STANDARD 99)        # yours alone
 > ```
 >
+### Choosing the window host: `RC_WINDOW_BACKEND`
+
+RayClay talks to the operating system through one seam, and there are two implementations of it.
+The knob is a cache variable, so it goes on the configure line rather than in your source:
+
+```bash
+cmake -B build-desktop                            # GLFW, the desktop default
+cmake -B build-sdl -DRC_WINDOW_BACKEND=SDL3       # the SDL3 host instead
+```
+
+| Target | Host | Why |
+|---|---|---|
+| Linux, macOS, Windows | **GLFW** by default, SDL3 on request | GLFW is the smaller of the two: SDL3 adds roughly 1.8 MB of code to the binary |
+| Android, iOS, the web | **SDL3**, and only SDL3 | GLFW has no port to these; the knob is forced and a different value is a configure error |
+
+**Your code does not change either way.** The seam is below the public API: the same source, the
+same `rcRunApp`, the same behaviour. Pick SDL3 on the desktop when you want one host across desktop
+and mobile in a single build system, or when you need something SDL3 carries and GLFW does not;
+otherwise the default is the smaller binary. The one thing to know before mixing your own SDL code
+with RayClay on that host is that `rcRunApp` owns the SDL event queue:
+**[`api-notes.md` > Several windows, one app](api-notes.md#several-windows-one-app)**.
+
 > Measured, because this one is easy to dismiss as harmless hygiene: with `CMAKE_C_EXTENSIONS OFF` the
-> implementation compiles `-std=c11` instead of `-std=gnu11`, `CLOCK_MONOTONIC` is not declared, and
+> implementation compiles `-std=c99` instead of `-std=gnu99`, `CLOCK_MONOTONIC` is not declared, and
 > **`rcProcessCpuPercent()` returns `-1.0f` on every call**: 99.66 became -1.00 on the same source
 > with only `-std` changed. Nothing warns: it still compiles, links and runs.
 
@@ -90,7 +143,7 @@ to exactly this `add_subdirectory`, so you can pull RayClay straight from a git 
 > `-std=c++17` (refused) and `-std=c++20` (clean). MSVC is exempt by that same condition.
 
 There is deliberately **no `install()` / `find_package()` path**, and that is a decision rather than a gap:
-every dependency (Clay, sokol, stb, the patched GLFW, nobar) is vendored, so a correct `install(EXPORT)`
+every dependency (Clay, sokol, stb, GLFW, SDL3, nobar) is vendored, so a correct `install(EXPORT)`
 would have to re-export that whole closure. Embedding the source in your build is the supported model.
 
 ## 3. Build & run on the desktop
@@ -107,11 +160,14 @@ cmake --build build-desktop
 > checkout defines for exactly that. Your own project gets the two portable lines above unless you
 > write presets of your own.
 
-> **Linux system packages.** The vendored GLFW needs X11/Wayland development headers. On
+> **Linux system packages.** The window host needs X11/Wayland development headers, and this is
+> true of **either** host - the default GLFW and the optional SDL3 both build against them. On
 > Debian/Ubuntu: `sudo apt install libwayland-dev libxkbcommon-dev xorg-dev`. On other distros
-> install the equivalent Wayland + X11 dev packages (see
-> [GLFW's compile guide](https://www.glfw.org/docs/latest/compile.html#compile_deps)). macOS and
-> Windows need only the compiler toolchain.
+> install the equivalent Wayland + X11 dev packages. macOS and Windows need only the compiler
+> toolchain.
+>
+> Vendoring the source removes the *fetch* step, not the platform's dev headers: RayClay ships the
+> host's code, and that code still compiles against your distribution's Wayland and X11 headers.
 
 ## 4. Build for the web: the *same* source
 
@@ -120,17 +176,18 @@ browser, with no `#ifdef` in your code.
 
 > **On web `rcRunApp` does NOT return.** It hands the frame to `emscripten_set_main_loop`, which
 > unwinds the C stack and lets the browser drive from there. ⇒ **anything you write after `rcRunApp`
-> in `main()` runs on desktop and never on web.** Put teardown in `RC_AppOptions.frameEndCallback`, or
-> own the loop yourself with `rcAppCreate`/`rcRunFrame`/`rcAppDestroy`. This is the one place where
+> in `main()` runs on desktop and never on web.** There is no teardown hook to move it into:
+> `frameEndCallback` runs after every *presented frame*, not once at the end, and the run ends
+> inside the browser loop where RayClay destroys the app itself. So release what must be released as
+> you go, and let process exit be your teardown. This is the one place where
 > "byte-for-byte the same source" and "the same control flow" are not the same claim. What changes is the **link**: a browser target needs
-emscripten's flags for the GLFW3 shim over WebGL2, and it has to emit a *page* rather than an
+emscripten's WebGL2 flags, and it has to emit a *page* rather than an
 executable. Add that to the `myapp` target from step 2; it is the whole web-specific diff:
 
 ```cmake
 if(EMSCRIPTEN)
     set_target_properties(myapp PROPERTIES SUFFIX ".html")   # emit myapp.html, not a binary
     target_link_options(myapp PRIVATE
-        -sUSE_GLFW=3                                         # the windowing shim RayClay targets
         -sMIN_WEBGL_VERSION=2 -sMAX_WEBGL_VERSION=2 -sFULL_ES3
         -sALLOW_MEMORY_GROWTH=1 -sGROWABLE_ARRAYBUFFERS=0
         -sSTACK_SIZE=8MB -sENVIRONMENT=web -sMALLOC=emmalloc)
@@ -200,11 +257,31 @@ html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; }
 #canvas    { display: block; width: 100vw; height: 100vh; }
 ```
 
-Supply your own page with `--shell-file <your-shell.html>`. A RayClay checkout ships one at
-`examples/web/shell.html` that is a readable starting point: it carries the CSS above, a resize handler
-that re-stretches the canvas, a WebGL2 probe that shows a readable card instead of a black rectangle,
-a "reload to continue" card for `webglcontextlost`, and a `Ctrl`+wheel passthrough so browser zoom
-still works.
+Supply your own page with `--shell-file <your-shell.html>`. **The CSS block above is the whole of
+what a shell must do to get your app RUNNING**, and you can paste it into a page of your own. One
+browser gesture needs four more lines, and their absence is silent - nothing looks broken, the
+gesture simply does nothing:
+
+```html
+<!-- after the <canvas> element -->
+<script>
+  /* Ctrl+wheel and trackpad pinch are the BROWSER'S zoom on web - RayClay's own
+     wheel zoom is compiled out there. The window host accepts every wheel over
+     the canvas and calls preventDefault() on it, so a page without this
+     exemption zooms NOTHING at all. Capture phase, registered at parse time, so
+     it runs before the host's listener whatever order the two register in. */
+  var glCanvas = document.getElementById('canvas');
+  var passZoom = function (e) { if (e.ctrlKey) e.stopImmediatePropagation(); };
+  glCanvas.addEventListener('wheel',      passZoom, { passive: true, capture: true });
+  glCanvas.addEventListener('mousewheel', passZoom, { passive: true, capture: true });
+</script>
+```
+
+That is transcribed from RayClay's own shell, which is a longer worked example and is **not in the
+distribution**; it is on the public examples branch as `examples/web/shell.html`. That shell carries
+the CSS, the exemption above, a resize handler that re-stretches the canvas, a WebGL2 probe that
+shows a readable card instead of a black rectangle, and a "reload to continue" card for
+`webglcontextlost`.
 
 > **In DevTools a RayClay diagnostic arrives at its own severity**: errors as `console.error`,
 > warnings as `console.warn`, information as `console.log`, so you can filter the console by level
@@ -213,7 +290,7 @@ still works.
 > as a value, which is what you want if you are routing diagnostics anywhere but a console.
 
 > **Building RayClay's own bundled examples into web pages is a separate job from building `myapp`.**
-> A RayClay checkout wires each of its 19 web-registered example targets through an `rc_web_example()`
+> A RayClay checkout wires each of its web-registered example targets through an `rc_web_example()`
 > helper that supplies the page shell and the demo hub, and `cmake --preset web` drives the lot. None
 > of that is needed for `myapp`; the link block above, plus the asset and shell notes beside it,
 > is the whole web-specific diff.
@@ -231,7 +308,7 @@ flexbox DSL:
 static void layout(RC_App *app, void *user) {
     (void)app; (void)user;
     RC_Style s = rcGetStyle();
-    rcColumn(.w = "grow", .h = "grow", .bg = s.background, .p = 24, .gap = 16) {
+    rcColumn(.bg = s.background, .gap = 16, .p = 24, .w = "grow", .h = "grow") {
         rcTextL("My app", .color = s.text);
         if (rcButton("go", "Click me", RC_BTN_PRIMARY)) {
             /* handle the click */
@@ -242,8 +319,8 @@ static void layout(RC_App *app, void *user) {
 int main(void) {
     RC_AppOptions opts = {
         .width = 900, .height = 600, .title = "My app",
-        .layoutCallback    = layout,
         .scratchArenaBytes = 4096,   /* see the rcFormat note below */
+        .layoutCallback    = layout,
     };
     return rcRunApp(&opts);
 }
@@ -254,13 +331,33 @@ the welcome canvas, exactly as `rcRunApp(NULL)` does, plus one `RAYCLAY[WARNING]
 A fallback you did not intend is never silent. Everything else zero-initialises to something
 sensible, including `.clearColor`, which falls back to the active style's background rather than to
 transparent black (a SNAPSHOT of the theme installed at that moment, not a live link), so change it
-later with `rcAppSetClearColor`. Grow the struct as you need it:
+later with `rcWindowSetClearColor`. Grow the struct as you need it:
 
 ```c
-    .renderMode = RC_RENDER_ON_DEMAND,       /* park at ~0% CPU when idle */
     .fontSizes  = sizes, .fontCount = 3,     /* your type ladder         */
     .nativeFrame = true,                     /* borderless + RayClay's titlebar */
+    .renderMode = RC_RENDER_ON_DEMAND,       /* park at ~0% CPU when idle */
 ```
+
+### Utility classes, if you think in Tailwind
+
+Every element also takes `.className`, a space-separated Tailwind v4 utility string. It is the same
+element and the same call - a second way to say the same things:
+
+```c
+    rcColumn(.className = "w-full h-full p-6 gap-4 bg-slate-900") {
+        rcTextL("My app", .color = s.text);
+    }
+```
+
+**The class string is the stylesheet and the typed fields are the inline style, so a typed field
+wins** where both name the same property. Name a group of utilities once with
+`rcDefineClass("card", "p-4 gap-2 rounded-lg bg-slate-800")` and use it as `"card"` anywhere.
+
+One rule has no browser equivalent: **a numeric C field left at `0` means UNSET, not zero**, because
+the two are the same bytes in a C struct. If you want an explicit zero, spell it in the class string
+(`p-0`, `gap-0`). The full vocabulary, the grammar boundary and the caps are in
+[Coming from the web](for-web-developers.md#utility-classes-classname).
 
 ### Looping over data: never jump out of an element body
 
@@ -277,7 +374,7 @@ for (int i = 0; i < n; i++) {
 }
 ```
 
-- **`continue` is safe** and always was. It ends the element body cleanly and reports nothing.
+- **`continue` is safe.** It ends the element body cleanly and reports nothing.
 - **`break` is safe but almost never what you mean.** It ends the *element body*, not your `for` loop,
   and the loop keeps going. Measured: `break` at `i == 2` of 5 still ran `i = 3` and `i = 4`. RayClay
   closes the element for you and logs one warning naming the mistake.
@@ -288,8 +385,14 @@ for (int i = 0; i < n; i++) {
   is simply missing, every frame** (a 5-iteration loop declared 3), and a sibling declared after the
   escape point can vanish entirely. "Unsupported" is the contract, *not* a promise about what happens
   next, so do not rely on whatever you happen to observe, and treat it as a bug, not a warning.
-- **The diagnostic fires once per app, not once per frame**: RayClay latches each error type per
-  `RC_App`, so a broken layout will not flood your log (a second `rcAppCreate` warns again). It scrolls away
+- **TWO DIFFERENT DIAGNOSTICS SIT HERE AND THEY LATCH DIFFERENTLY. Neither floods your log, and the
+  scope matters when you are trying to reproduce one.** The *escape* warning - the one this section
+  is about, fired when a body is left early - latches **once per PROCESS**: it is a block-scope
+  `static` and nothing resets it, so a second window and a second `rcAppCreate` both stay silent.
+  The layout-engine errors quoted in the next bullet (`Innermost element left open`, and its family)
+  latch **per WINDOW**: each surface carries its own bit per error type, so a second window really
+  does report the same fault again. **If you opened a second window to make a warning reappear and
+  got nothing, you were looking at the escape warning, and it was not going to.** It scrolls away
   while the broken UI stays on screen, so do not go looking for a repeating line to confirm the problem;
   there isn't one. That is what makes this **harder to notice** than a crash: a crash gets investigated,
   half a missing UI gets shipped.
@@ -326,8 +429,8 @@ static const float sizes[F_COUNT] = { 13, 16, 30 };
 
 int main(void) {
     RC_AppOptions opts = {
-        .title      = "My app",
         .width      = 900, .height = 600,
+        .title      = "My app",
         .fontPath   = "assets/Inter.ttf",  /* NULL = the bundled Roboto subset */
         .fontSizes  = sizes,
         .fontCount  = F_COUNT,
@@ -342,7 +445,7 @@ Then select a size by **slot**: `rcTextL("Title", .font = F_H1)`.
 - **The i-th size becomes `fontId` i: the load-order index, not the size value.** `.font = 30` does
   not mean 30px; it means slot 30, which does not exist. Name the slots and you cannot get this wrong.
 - **Leave `.fontPath` NULL and you still get the ladder**: RayClay bakes the *bundled* face at each of
-  your `.fontSizes`, which is how every bundled example stays zero-asset.
+  your `.fontSizes`, which is why only one bundled example ships a font at all.
 - **`.fontPath` without `.fontSizes`/`.fontCount` is ignored** (it warns once) and you silently get the
   bundled face; if your font "didn't load", this is almost always why.
 - **Font problems are reported to the LOG, never through a return value.** A failed bake degrades to the
@@ -360,7 +463,8 @@ Then select a size by **slot**: `rcTextL("Title", .font = F_H1)`.
   face). **And the refusals you are most likely to hit are not about the font at all:** a path that did
   not resolve (`rc_font_load: cannot read …`; note the different prefix), and running out of slots
   (`rc_font: table full (16) …`, because 16 is the *total* including the bundled face and `rcLoadFont`
-  does not de-duplicate paths). The cheatsheet's `rcLoadFont` entry has the full table.
+  does not de-duplicate paths). [api-notes.md ▸ rcUnloadFont](api-notes.md) has the full table: every
+  sentence the font path can print, which are refusals and which are warnings on a face that loaded.
 - Set neither and you get the bundled face at one default size as `fontId` 0, so text always renders.
 - Need a *named* ladder instead of indices (`rcFont("Inter", RC_WEIGHT_BOLD, 22)`): register faces with
   `rcRegisterFont(family, weight, path, size)` at startup. Up to 16 baked faces total.
@@ -374,11 +478,11 @@ Then select a size by **slot**: `rcTextL("Title", .font = F_H1)`.
   weights (once per weight, not per call). The face still loads; it is a warning, not a refusal.
   *(Measured 2026-08-09 across Roboto, Inter, Open Sans and Nunito: registering the variable file as
   REGULAR and as BOLD gives renders identical to the ink pixel, while the static pair separates cleanly.)*
-  **Evidence level, so you know what you are getting: the named ladder is covered by the test suite but
-  is not exercised by any bundled example.** Every example ships zero-asset, and the bundled face is
-  Roboto-Regular with no synthetic bold, so demonstrating a second weight would mean shipping a second
-  TTF and breaking the zero-asset property the examples rely on. Bring your own weights and it works;
-  you just will not find a worked example of it here.
+  **The worked example is `examples/ex22_docs_reader`**, which registers a `"Lato"` ladder across
+  `RC_WEIGHT_REGULAR` and `RC_WEIGHT_BOLD` at several sizes and resolves it with `rcFont` (see
+  `src/app/app.h`). It is the one example that ships its own faces; every other example takes the
+  bundled Roboto-Regular, which has no synthetic bold, so a second weight there would mean shipping
+  a second TTF.
 
 **Formatting dynamic text?** The default options include **no scratch arena**: `scratchArenaBytes` is the
 one field where `0` means *off* rather than *a sensible default*, so `rcFormat` (printf into a per-frame
@@ -412,19 +516,19 @@ library, together with all of its bundled dependencies (§2), so a bare `gcc mai
 `clang main.c` compiles your file but has nothing to link the symbols against. Build through CMake:
 `target_link_libraries(app PRIVATE rayclay)` (§2) pulls in the library, the vendored windowing and
 render deps, and the OpenGL/system libraries in one line. There is no supported raw-compiler build:
-hand-linking the sources would mean compiling all of GLFW for your platform yourself.
+hand-linking the sources would mean compiling the whole window host for your platform yourself.
 
 **Consuming RayClay from a project *outside* its clone.** `add_subdirectory(rayclay)` in §2 assumes
 RayClay is vendored *inside* your project (a submodule or a copied folder). If you instead cloned
 RayClay alongside your app, point `add_subdirectory` at the RayClay **repo root** (the folder that
-holds the top-level `CMakeLists.txt`, *not* the inner `rayclay/` header dir), and give it an output
+holds the top-level `CMakeLists.txt`), and give it an output
 dir, since it lives outside your source tree:
 
 ```cmake
 cmake_minimum_required(VERSION 3.21)
 project(myapp C)
 
-# ../rayclay is the repo ROOT (top-level CMakeLists.txt) - not the inner rayclay/ dir.
+# ../rayclay is the repo ROOT - the folder that holds the top-level CMakeLists.txt.
 add_subdirectory(../rayclay rayclay-build)
 
 add_executable(myapp main.c)
@@ -440,10 +544,55 @@ stay off.
 ### Consuming RayClay from C++
 
 The library is pure C99 and needs no C++ toolchain to build. Your *app* may be C++ (the header is wrapped
-in `extern "C"`), with three rules:
+in `extern "C"`), under the rules below. The worked example is `examples/ex06_cpp_kanban/main.cpp`: a task
+board held in `std::vector` and `std::string`, with every rule below shown at the line it bites.
+
+**WHAT IS SUPPORTED, EXACTLY: a C++ project can consume RayClay's public C API.** That is the whole
+claim, and it is gated - a check builds a separate CMake project that sets no dialect of its own, checks that our target hands it C++20, checks that the default dialect is
+REFUSED by RayClay's own `#error`, and compiles the header at `-std=c++20 -Wall -Wextra -Werror`
+with a planted offender as the red control.
+
+**WHAT IS NOT CLAIMED IS THAT RAYCLAY'S C SOURCES, OR THE SHIPPED C EXAMPLES, ARE VALID ISO C++** -
+and they are not. They use C compound literals, `(T){...}`, which ISO C++ has never had; g++ and
+clang++ accept them as an EXTENSION, so "it compiled as C++" is not the same result. Under
+`-pedantic` g++ says it in those words: *"ISO C++ forbids compound-literals"*. On 2026-09-20 the
+compound-literal ratchet read **60 distinct sites in 11 of the 29 graded consumer translation
+units** (clang++ 21.1.8: 65); that is a DATED READING, and the
+current one is whatever the ratchet prints today. This bites exactly one person: someone who
+renames a shipped `.c` example to `.cpp` and expects a strict-ISO compiler to take it. MSVC is that
+compiler - it rejects the bare form outright (`error C4576`) - which is why the public header and
+the DSL route through `RC_LIT(T)` and compile on every compiler the project ships to.
 
 **Build at C++20 or later.** The vendored layout engine `#error`s otherwise ("requires C99, C++20, or
 MSVC"), so this is a hard stop at the first `#include`, not a subtle incompatibility.
+
+**Designated initialisers must follow declaration order in C++.** C lets you write them in any
+order; C++20 does not, and g++ and clang++ both hard-error rather than warn. It bites soonest on
+`.className`, which sits near the END of `RC_ComponentOptions` - after every layout and style
+designator, and before `.scrollOffset`, which is the last member (an ABI addition appended there).
+Order by the HEADER, never by habit: `rayclay.h` is the authority and a designator added to the
+struct can move what "last" means:
+
+```cpp
+rcBox(.p = 12, .className = "gap-2");   /* ok   */
+rcBox(.className = "gap-2", .p = 12);   /* C ok, C++ ERROR: designators out of order */
+```
+
+The field is a `const char *`, so a `std::string` needs `.c_str()` - and it must outlive the frame,
+which a temporary does not. Prefer a string literal.
+
+**`-Wextra -Werror` needs `-Wno-missing-field-initializers`, and the CMake target passes it for you.**
+`rcBox(.p = 12)` names one member of `RC_ComponentOptions` and value-initialises the rest - that is the
+DSL's contract, and the zeros are well-defined - but in C++ g++ reports every unnamed member under
+`-Wextra`, and clang 18 and later does the same (`-Wmissing-designated-field-initializers`, a subgroup of
+the same flag). Neither warns in C. Linking `rayclay` adds `-Wno-missing-field-initializers` to your
+C++ translation units under GCC and Clang, and to nothing else (measured on g++ 15 and clang++ 21: a
+`-Wextra -Werror` consumer is red without it and green with it). Compiling against the header on your
+own line, without our CMake, add that one flag yourself. *(Re-measured 2026-09-20 on the same
+translation unit: g++ 15.3.1 reds on `RC_ComponentOptions::bg` and clang++ 21.1.8 on
+`-Wmissing-designated-field-initializers`, but **AppleClang 21.0.0 does not warn at all** - so the
+flag is a no-op on a mac and a requirement everywhere else. Do not "correct" this paragraph from a
+macOS build: it is the platform where the gotcha is invisible.)*
 
 **Single-header users: `RAYCLAY_IMPLEMENTATION` goes in a `.c` file, never a `.cpp`.** This is the one
 place the usual single-header habit does not transfer: the reflex is to drop the `#define` into whatever
@@ -529,13 +678,12 @@ MinGW's default link set today, which is a convenience rather than a promise: na
 #### Where Windows actually stands, measured
 
 Rather than a support badge, here is what was run. Host **Windows 11 26200 x64, MSVC 19.44 (VS 2022),
-Release**, on a tree verified byte-identical to the Linux one before building.
+Release**.
 
 - **The library compiles clean:** MSVC at **C99, 0 errors and 0 warnings**.
 - **Every bundled example links, and every one of them runs.** They are launched, not merely built,
-  on all three platforms (on a real compositor with a real GPU driver rather than a software
-  rasteriser), and the owner has opened several by hand on a physical Windows 11 desktop: window,
-  native resizing and the taskbar icon all correct.
+  on all three platforms, on a real compositor with a real GPU driver rather than a software
+  rasteriser: window, native resizing and the taskbar icon all correct.
 - **The behavioural test suite runs on MSVC, not just the compile**: tables, charts, titlebars,
   zoom, interaction, text areas and the bench suite all execute there.
 - **A handful of checks are Linux-only, and deliberately so**: X11, `-ffast-math`, GNU-ld `--wrap`
@@ -546,7 +694,7 @@ Release**, on a tree verified byte-identical to the Linux one before building.
   **every draw call** and still put nothing correct on screen, with every other check staying green,
   which is exactly why the pixel readback exists.
 - **The layout itself is compared across platforms, and it agrees exactly.** 44 text measurements
-  (`rcMeasureText`) plus the element and draw-command counts (`rcAppFrameCounts`) are **bit-identical**
+  (`rcMeasureText`) plus the element and draw-command counts (`rcWindowFrameCounts`) are **bit-identical**
   on x86_64/gcc, arm64/Apple clang and x86_64/MSVC: `max |Δ| = 0`, not "close". So the *inputs* your
   layout is computed from, and the *shape* it produces, do not drift between platforms.
 
@@ -572,22 +720,33 @@ was lost.
 | nothing | the arena was big enough from the start |
 | `[WARNING]` *ran out of element capacity* **+** `[WARNING]` *still open layout elements* | **benign warm-up growth.** Self-resolving, but that frame draws NO UI: it shows the clear colour alone |
 | both of those **plus** `[ERROR]` *capacity hit the ceiling (N)* (usually with a hashmap warning) | **real.** The arena refuses to grow; the frame IS presented, TRUNCATED: the overflow is what is dropped |
+| one `[WARNING]` naming *internal text measurement cache*, **with no companion warning** | **the other capacity.** Same warm-up growth, different pool: measured words, not elements. See below |
 
 **The two warnings on their own are normal warm-up.** The layout arena starts at
 `RC_AppOptions.startLayoutElements` and *grows on demand*. On the frames where it is growing, that frame's
 declaration is cut short, so the layout engine reports both that it ran out of element capacity and that
 elements were left open. RayClay then grows the arena, re-lays out at the larger size, and carries on.
-**It is self-resolving, you see it once, and any app whose first screen is bigger than its start count
-shows it**, including the memory-tight configuration this guide recommends for embedded targets
-(`startLayoutElements = 512`).
+**It is self-resolving, you see it once, and any app whose first screen is bigger than its start
+count shows it** - including any app that lowers `startLayoutElements` to keep its initial arena
+small.
 **But a growing frame draws nothing of your UI.** RayClay skips `rcRender` on exactly that
 frame; the clear, the end-frame and the swap all still run, so what the user sees is the **clear
 colour alone**. That is deliberate (a half-declared layout is worse than a blank one), and it is why
-`RC_AppOptions.clearColor` / `rcAppSetClearColor` matter more than they look: on a warm-up frame the
+`RC_AppOptions.clearColor` / `rcWindowSetClearColor` matter more than they look: on a warm-up frame the
 clear colour IS your app.
 Measured: 600 elements from a 2,048 start is silent; the same 600 from a 128 start prints
 those two warnings. **That measurement pinned frames PRESENTED, not frames whose UI was drawn**: do
 not read it as "the UI rendered every frame".
+
+**There is a second capacity, and its message looks nothing like the first two.** Text is measured
+into its own cache keyed by word, so a text-heavy screen can exhaust that pool while the element
+arena is comfortable. It grows and warns the same way, with two differences worth knowing before you
+go looking for a bug: it arrives **alone**, with no *still open layout elements* beside it, so it
+matches neither row above; and the ceiling it reports is **twice** `RC_AppOptions.maxLayoutElements`,
+because the word pool is sized at 2x the element pool. A reader who has set `maxLayoutElements` to
+65,536 and reads a ceiling of 131,072 has not misread anything.
+**Raise `RC_AppOptions.maxLayoutElements`.** The message is Clay's own and names Clay's setter; that
+is the layer underneath, and RayClay sizes both pools from the one option you already have.
 
 > **The warning tells you this itself.** On the growth path RayClay appends *"capacity is
 > growing and this layout will be re-run at the larger size: no lasting data loss. Raise
@@ -692,6 +851,211 @@ through HTML. Setting the field is still correct (it is simply inert on those tw
 `.desktop` file if Wayland users matter to you.** Full table, and the `RC_NO_DEFAULT_APP_ICON` build knob,
 in the [cheatsheet](cheatsheet.md).
 
+## One source, every screen size
+
+The section above is about the *picture* being the same everywhere. This one is about the *space* not
+being: a desktop window is wide and a phone is 411 logical pixels across, and no amount of pixel
+fidelity saves a three-pane layout squeezed into a third of its design width.
+
+RayClay's answer is deliberately small, because the alternative is two applications.
+
+### The rule: branch on the space you have, never on the operating system
+
+There is no `RC_MOBILE`, and nothing else keyed on the operating system. The class grammar carries
+Tailwind's five responsive prefixes (`sm:` `md:` `lg:` `xl:` `2xl:`, at Tailwind's own values; see
+[for-web-developers.md > Breakpoints](for-web-developers.md#breakpoints-measure-the-layout-width-not-the-window-width)),
+and for the branches a class string cannot express - which pane to declare at all, how many columns
+to build - a responsive layout here is an ordinary C `if`, on `rcViewport()`:
+
+```c
+static void layout(RC_App *app, void *user)
+{
+    RC_Viewport v = rcViewport();
+
+    if (v.width < 768.0f) compact_layout(user);
+    else                  wide_layout(user);
+}
+```
+
+`rcViewport().width` is **the space Clay was actually given**, in layout units, not window pixels.
+That distinction is the single most common way a breakpoint ends up inverted, and reading it from
+the library is how you stop having to think about it: `RC_ZOOM_LAYOUT`, the default, reflows into
+`window / zoom`, while `RC_ZOOM_OPTICAL` lays out at `max(window, window / zoom)` and magnifies the
+raster instead, so dividing the window size by the zoom yourself is right in one mode and wrong in
+the other. `rcViewport()` has already resolved that.
+
+It also carries `.breakpoint`, Tailwind's six bands at Tailwind's own values, if you would rather
+name the rung than repeat the number:
+
+```c
+if (rcViewport().breakpoint < RC_BP_MD) compact_layout(user);   /* RC_BP_MD is >= 768 */
+else                                    wide_layout(user);
+```
+
+That is strictly more expressive than a media query, because the condition is C and can read anything:
+the size, the app's own state, whether a pointer is present. It is also strictly less familiar, so it is
+worth saying plainly what the rule buys you.
+
+**Choose the layout from the space, never from the platform.** An `#ifdef __ANDROID__` gets this wrong
+in both directions: a tablet in landscape gets the phone layout it does not need, and a desktop window
+dragged to a third of the screen keeps a wide layout it has no room to draw. Every layout you can reach
+on a phone you can also reach on a desktop by making the window narrow, which is the only reason this is
+testable at your desk at all.
+
+`768` above is Tailwind's `md`; RayClay has no opinion about the number. Derive yours from your own fixed
+widths: if a sidebar is 280 and a detail pane stops being useful below 420, your breakpoint is 700, not a
+number from a table.
+
+The one thing not to do is measure it yourself from `rcGetWindowDimensions()`: the naive
+`width / zoom` inverts every breakpoint under optical zoom. `rcViewport()` exists so that this is
+someone else's problem. The full rule is in
+[for-web-developers.md ▸ Breakpoints](for-web-developers.md#breakpoints-measure-the-layout-width-not-the-window-width).
+
+### The safe area: a phone draws your window under the status bar
+
+Ask for it, and subtract it. The OS will not do this for you and the runner does not do it either.
+
+```c
+RC_Viewport v = rcViewport();     /* .safe is ALREADY in layout units - no arithmetic here */
+
+rcColumn(.id = "root",
+         .pt = (uint16_t)v.safe.top, .pb = (uint16_t)v.safe.bottom,
+         .pl = (uint16_t)v.safe.left, .pr = (uint16_t)v.safe.right,
+         .w = "grow", .h = "grow") {
+    /* ... */
+}
+```
+
+Apply it **once, at your root**, not at every child: it is a property of the window, not of a widget.
+
+**One desktop window is not zero, and it is probably the one on your desk.** A FULLSCREEN window on a
+notched Mac reports the notch: SDL sets the insets from `NSScreen.safeAreaInsets` on macOS 12 and
+later, and zeroes them again the moment you leave fullscreen. A windowed app on any desktop still
+gets `{0,0,0,0}`, which is why the rest of this section reads the way it does. Derived from the
+backend's source rather than measured on the machine, so treat it as a reason to spend the inset at
+your root on every target, not as a number to quote.
+
+**Do not reach for `rcGetSafeAreaInsets()` and divide it by `rcWindowZoom()` here.** That is the same
+mistake the paragraph above describes, wearing different clothes: the raw insets arrive in window
+pixels, and dividing by zoom converts them correctly under `RC_ZOOM_LAYOUT` and **incorrectly under
+`RC_ZOOM_OPTICAL`**, which lays out at `max(window, window/zoom)`. It is also a single factor
+applied to both axes, and the two axes floor independently. `rcViewport().safe` does the conversion
+from the ratio the layout engine actually got, per axis, so it is right in both modes and stays
+right if a third is ever added. The `(uint16_t)` casts remain **required** - the padding fields are
+`uint16_t`, `RC_Insets` members are `float`, and `-Wfloat-conversion` is on.
+
+The insets are `{0,0,0,0}` on desktop, so this is the same code on every target and
+there is nothing to `#ifdef`. Measured on a Pixel 8a (1080x2400 at 420 dpi, so a **411 x 914 logical-px
+viewport**), the insets are **46 px at the top** (status bar and camera cutout) and **24 px at the
+bottom** (the gesture pill): about 8% of the window, and precisely the 8% your header and your bottom bar
+want to occupy.
+
+### The architecture: share everything except the layout
+
+**The file layout that goes with all of this is its own page: [How to structure a RayClay
+app](app-structure.md).** It is four files, one of which is empty on purpose.
+
+The shape that works is the one most cross-platform GUI stacks converge on, and RayClay does nothing to
+stop you:
+
+| layer | what lives there | platform-aware? |
+|---|---|---|
+| domain / services | your state, your rules, your I/O | **no.** Never fork this. A bug fixed on desktop must be fixed on the phone by the same edit |
+| theme + components | colours, spacing, your own widgets | **no.** One `rcSetStyle`, one set of components, both layouts draw them |
+| layout | which panes exist, and how they are reached | **yes** - and by *available space*, per the rule above |
+| platform adapter | only what genuinely has no portable spelling | **yes**, and it should be almost empty |
+
+The layout layer is the only one that branches, and it branches on a number rather than on a target. If
+you find yourself forking a service, that is the signal that a *capability* is missing from the layer
+below, not that you need a second application.
+
+### What "the compact layout" usually is
+
+Three panes become one pane at a time plus a way back. A fixed-width sidebar becomes a full-width list
+that the detail view replaces. A wide row of controls becomes a column. None of this is a RayClay
+feature; it is all ordinary elements, which is the point.
+
+**What it is never: a smaller app.** Portrait is where a phone spends almost all of its time, so the
+compact layout must carry everything the wide one does, reachable by scrolling; landscape may
+rearrange the same things and may never be the only place a control or a number appears. The
+patterns that keep an app whole at 393 units wide (chip rows for hidden table headers, a scrolling
+root, no fixed width wider than the phone, no text cut mid-word) are in
+[app-structure.md ▸ Portrait is the contract](app-structure.md#portrait-is-the-contract-landscape-is-a-presentation).
+
+**Scrolling works by finger, and the rules are worth knowing before you lean on it.** A press-drag on
+your content pans the deepest scroll container under the contact, per axis, after an 8 px threshold.
+Two things follow that a reader usually assumes the other way round: **a pan does not fire a click**,
+so a draggable list of buttons behaves; and **an axis only pans if you authored it scrollable and the
+content actually exceeds the view**, so `overflow: hidden` without `.scroll` never pans, whatever the
+content size. **A flick flings**: the release keeps moving and damps to a stop, and because the
+velocity is smoothed over the last moment rather than read off the final pair of points, a slow drag
+that ends in a flick throws at the flick's speed. Park the finger for a moment before lifting and
+nothing is thrown. There is no scroll chaining for a finger: a pan that
+reaches the end of its container stops there rather than moving the parent. The mouse wheel does chain,
+so a notch that a nested or sideways scroller cannot take reaches the page behind it.
+
+`rcScrollbar(id)` is a nicety rather than the only way in, and **you call it unconditionally** -
+there is no `if (!rcPointerIsCoarse())` to write, because the library asks that question itself. On a
+desktop you get the bar you expect, and it is something a mouse can actually grab. On a phone you get
+what a mobile browser gives you: no track, a thin translucent thumb while the content is moving, gone
+about half a second after it stops. It claims no input while you tap or pan, so it can never swallow
+a tap meant for the content underneath - but press and hold the thumb for half a second and it widens
+and takes the drag, so a long list can be driven by the bar as well as swiped.
+
+One thing that is still not a solution: **do not answer a too-wide element by making it scroll
+sideways.** It will pan now, but a `.scroll` container is a clip container on **both** axes, so
+`.scroll = "h"` cuts a drop shadow off the top and bottom of its own row on every platform. Make it
+narrower, make its text smaller, or drop something.
+
+### Where mobile actually stands today, stated plainly
+
+RayClay builds and runs on Android, and the examples in this repository have been qualified on a physical
+device. Two boundaries matter to you before you plan around it:
+
+- **The Android path is an in-repo debug APK producer, not a release-packaging interface.** It builds the
+  applications registered by RayClay's own build. It does not accept an external source tree, an
+  arbitrary consumer CMake project, or loose external assets, and its generated package identity and
+  debug signing are not an end-user distribution path. If you are shipping to a store, that work is
+  yours today.
+- **Desktop is unaffected by any of it.** It keeps its window host; the Android work is additive.
+- **The web is unaffected except on one point, and it is a sharp one: the soft keyboard.**
+  `rcSetSoftKeyboardVisible()` is inert in a browser, so a RayClay page cannot raise a phone's
+  on-screen keyboard, and your code cannot work around it: the page is a single `<canvas>` with no
+  focusable text element for the browser to attach one to. **Typing works wherever a real keyboard
+  does** - a desktop browser, or a phone with one attached; what a touch-only phone cannot reach is
+  the on-screen keyboard. Plan a web build for reading and pointing on a phone, not for data entry.
+
+Three things are absent rather than automatic, and an app cannot paper over any of them from its own
+code:
+
+1. **Ordinary editor focus does not raise the soft keyboard**, and there is **no automatic
+   keyboard-avoidance**, so a field low on the screen can sit behind the IME.
+   `rcSetSoftKeyboardVisible()` and `rcSetImeCaretRect()` work when you call them explicitly **on
+   Android and iOS**; on the web `rcSetSoftKeyboardVisible()` does nothing at all and says so once
+   in the log rather than failing silently (see the web point above). IME preedit composition is
+   not implemented.
+2. **There is no scroll chaining for a finger.** A pan that reaches the end of its container stops
+   there rather than moving the parent, so a nested list already at its end holds the page still
+   under a finger. (A mouse wheel does chain to the enclosing scroller; a finger does not.)
+3. **A long-press does not open a context menu.** `rcBeginContextMenu` opens on a right-click and a
+   finger has no right button, so a control whose only affordance is a right-click has none on a
+   phone.
+
+**iOS: every example runs on a physical phone, and this is what is established.** Every example
+builds for the device, and every one of them except the desktop icon converter (`ex11`) is
+installed on an iPhone 15 (iOS 17.5.1) on each sync: every `ex*` example and all six `bench/` apps,
+each built, signed, installed and launched from the shell with nobody at the Mac, each rendering its
+full budget of frames and screenshotted on the device, each carrying the RayClay icon on the home
+screen. The set grows with the example roster rather than with this paragraph. Two things a phone
+user sees were checked by eye on that device: an app launches with **no soft keyboard** until an editor is focused, and **rotation
+keeps the frame at 1:1** rather than stretching it during the turn.
+
+What it is not is a shipping target. Release packaging and signing are unresolved, the renderer on
+the phone is OpenGL ES rather than Metal, the three gaps above have not been established either
+way on iOS, the soft-keyboard behaviour a phone app needs is unverified there beyond "it stays
+down", and nothing in this section's Android qualification carries across. Build and run your app
+on the phone freely; do not plan a store release around it yet.
+
 ## Known limitations
 
 **Holding a resize edge motionless pauses frame-driven animation (Windows + macOS desktop).** While you
@@ -702,29 +1066,105 @@ OS-owned modal loop that doesn't return control to the app until mouse-up. The w
 blank and static UI is unaffected. Linux/X11 doesn't exhibit it: there the resize is delegated to the
 window manager, and there is nothing to change in your app code.
 
+**Linux under Wayland has the opposite problem, and it is an open defect.** The compositor sends a
+configure at pointer-motion rate and RayClay draws a full frame for each one, synchronously, with no
+coalescing: if a draw is slower than the configures arrive the app is unresponsive for the length of
+the drag and then walks the backlog afterwards. Building with `-DRC_NO_LIVE_RESIZE` avoids it, at the
+cost of holding the last frame until the drag ends.
+
+### Seven fixed ceilings, and what happens when you reach one
+
+These are compile-time array bounds, not tunables: there is no `-D` knob and no runtime setting.
+**None of them crashes, corrupts, or silently renders wrong: every one of them warns.** Six warn once
+per process; the font registry warns on every refused call, because a refused registration is a
+question about that one face. Most counts are per frame, so a screen showing eight inputs at a time
+is nowhere near the input ceiling however many fields your form declares in total.
+
+| Ceiling | Value | What it counts | Past the limit |
+|---|---:|---|---|
+| Text inputs | 16 | `rcTextInput` / `rcTextArea` registered in one frame | the extras still LAY OUT but draw no text and no caret |
+| Tooltips | 32 | tooltips shown in one frame | the extra tooltip is not shown |
+| Modal nesting | 8 | how deep modals may nest, not how many you declare | the extra modal is not opened |
+| Overlay nesting | 16 | overlay push depth | the tints past the limit are not drawn; the elements still are |
+| Registered font families | 16 | `rcRegisterFont` entries for the life of the process | the face may still load, but no registry row is taken, so `rcFont` never resolves it |
+| Table columns | 16 | columns in one `rcBeginTable` | the extra columns are dropped, the table still draws |
+| Table nesting | 4 | how deep tables may nest | `rcBeginTable` returns **false** and the whole table is skipped |
+
+Two of these deserve planning rather than remembering. **The font registry is the only per-process
+entry**: each family plus weight plus size consumes a slot permanently, so registering faces in a
+loop exhausts it where a form with 40 fields never exhausts the input ceiling. Recover a slot with
+`rcUnloadFont`, which frees the registry row as well as the face. And **the two nesting limits refuse
+the whole element** rather than trimming it: `rcBeginModal` and `rcBeginTable` both return `false`,
+so branch on the return if you nest either.
+
 ### Not in v1.0 (so you can plan around it)
 
 RayClay is deliberately scoped for its first tag. These are **out** in v1.0, named here so nothing
 surprises you:
 
-- **Keyboard traversal, focus rings, static-text selection, OS dark-mode detection, and accessibility.**
+- **Keyboard traversal, focus rings, OS dark-mode detection, and accessibility.**
   Widgets are pointer/touch-first: `Tab` / `Shift-Tab` do not move focus between them and there is no
-  focus ring; only text *inputs* are selectable (there is no select-and-copy of static labels). Dark and
-  light themes ship (`rcStyleDark` / `rcStyleLight`); install one with `rcSetStyle(rcStyleLight())` and
+  focus ring. Static text IS selectable and selection is **on by default**, the way a browser has it,
+  and `.select = rcSelectable(false)` turns it off per widget. A drag wraps onto the next visual line
+  and carries on across components, primary modifier + A selects every run in the window
+  (`rcSelectAll()` where there is no keyboard), and copy (primary modifier + C) takes up to 4,095
+  bytes; double-click takes a word and triple click the whole element, as a browser does. Dark and light themes ship (`rcStyleDark` / `rcStyleLight`); install one with `rcSetStyle(rcStyleLight())` and
   read the active theme anywhere with `rcGetStyle()` (it returns the dark preset until you install
   another). **A theme switch AT RUNTIME needs a second line**, because `rcSetStyle` cannot reach the
-  window behind your layout: `rcAppSetClearColor(app, rcGetStyle().background)`. Without it the old
-  background stays wherever your layout does not cover the window.
+  window behind your layout: `rcWindowSetClearColor(rcAppMainWindow(app), rcGetStyle().background)`.
+  Without it the old background stays wherever your layout does not cover the window - the edge
+  during a live resize, and the one frame RayClay holds back while it grows its layout arena, where
+  the clear colour is the whole screen.
+  **Call it unconditionally, next to wherever you install the style.** `rcWindowSetClearColor` is
+  change-gated inside the library - it requests a frame only when the colour actually moves - so the
+  plain immediate-mode idiom is also the cheapest correct one, and there is no shadow copy to keep in
+  sync:
+
+```c
+rcSetStyle(my_theme(st->dark));                  /* wherever you already do this */
+rcWindowSetClearColor(rcAppMainWindow(app), rcGetStyle().background); /* the second line */
+```
+
+  **Do not "optimise" that into `if (st->dark != last)`, and this is worth knowing before you write
+  it.** A theme toggle is a widget inside your layout, so it flips your bool *after* the frame's
+  `rcSetStyle` has run. A guard keyed to the bool therefore fires on a frame where `rcGetStyle()` is
+  still the OLD style, pushes the wrong colour once, and then never fires again - because your bool
+  and its shadow now agree, and the window keeps the wrong ground for the rest of the run. Reading
+  the style itself has no such ordering to get wrong. `examples/bench/trader`, `messenger`, `notes`,
+  `gallery` and `ex22_docs_reader` all do it the short way.
   RayClay does not read the OS preference; you choose it. There is no assistive-technology / screen-reader surface.
-- **One window per process.** `rcAppCreate` returns `NULL` if an app is already live, so a second
-  *simultaneous* window is not available. Sequential windows do work (`create → rcAppDestroy → create`).
-  The limit is RayClay's own (a hundred-odd pieces of per-window state still live in file-scope statics
-  and have to move behind a context first), **not the layout engine's**, which does support simultaneous contexts.
-  It is a real refactor rather than a check waiting to be lifted, which is why `rcAppCreate` refuses
-  cleanly instead of half-working. **If you want a second view, dock it in the same
-  window:** `rcBeginSplitPane` for a resizable sidebar/detail split, or a non-modal `rcBeginModalEx`
-  panel for a floating inspector that leaves the app live behind it. Both ship today and are demoed in
-  `ex10` and `ex12`; see [widgets.md](widgets.md#modal-dialogs-and-non-modal-panels).
+- **One primary window per process, and as many extra desktop windows as you like.** `rcAppCreate`
+  returns `NULL` when a primary window is already open, and says so in the log; a bare `rcInitWindow`
+  trips the same guard. Sequential lifetimes are legal, each with its own clear:
+  `create`, `rcAppDestroy`, `create` for an app, and `rcCloseWindow` for a window you opened yourself
+  with `rcInitWindow`.
+  **For a second native window, call `rcAppOpenWindow(app, &options)` on the app you already have.**
+  One `RC_App` and one thread drive every surface, each with its own layout callback, scratch arena,
+  zoom, clear colour and render mode. It is desktop only: on mobile and the web it returns `NULL`
+  without attempting a host window. A non-`NULL` return is a record, not a ready window, so observe
+  `rcWindowState(w) == RC_WINDOW_READY` before moving content into it.
+  **A torn-off panel almost always wants `RC_WindowOptions.owner` set to the window it came from.**
+  That is what makes it a child of your app rather than a second application: the desktop keeps it
+  above its owner and minimises it alongside, so it cannot be lost behind the document it belongs to.
+  Set it at open, not afterwards, along with `.placement` and `.topmost` - state applied once the
+  window is already showing is visible to the user as a jump or a flash. Each one is a request a
+  window manager may decline, so each has a query to ask first (`rcWindowOwnerSupported`,
+  `rcWindowPositionSupported`, `rcWindowTopmostSupported`) and a getter to read back afterwards.
+  **Two qualifiers that a reader of the paragraph above will otherwise assume wrongly.** `.owner`
+  does NOT by itself keep the panel out of the taskbar - that is `.taskbar`, independent on purpose,
+  because a desktop decides listing by window TYPE and an owned window is listed like any
+  application; a tool panel asks for both. And `rcWindowOwnerSupported` is false on a Wayland
+  desktop built against GLFW, which has no route to parent a toplevel there, so on that session the
+  panel is a plain window and your app owes the user its own way back to it. See
+  [cheatsheet.md](cheatsheet.md) for the full window API and
+  [api-notes.md](api-notes.md#several-windows-one-app) for the lifecycle rules.
+  `examples/ex20_system_monitor` is the worked case for a panel the user tears off and expects to
+  get, and `examples/ex12_rayclay_inspector` for the opposite one - a watch window that opens
+  without taking the keyboard (`.focusPolicy`) and stays out of the taskbar (`.taskbar`).
+  **If a second view belongs in the same window instead**, `rcBeginSplitPane` gives a resizable
+  sidebar and detail split and a non-modal `rcBeginModal` gives a floating inspector that leaves the
+  app live behind it. Both are demoed in `ex10` and `ex12`; see
+  [widgets.md](widgets.md#modal-dialogs-and-non-modal-panels).
 - **Scrollbars are opt-in and vertical-only.** A scroll container clips and scrolls, but draws no bar
   until you call `rcScrollbar(id)`, **from inside your layout callback**, since the bar is a floating
   element declared at the call site. Horizontal overflow scrolls without a bar. Layering is automatic:
@@ -732,13 +1172,15 @@ surprises you:
   everything else behind it. Declare it in the same scope as the container it names.
 - **An app that animates on its own must ask for frames.** The runner is event-driven, so an
   idle window parks at ~0 CPU, but state RayClay cannot see changing (a timer, a socket, a physics step)
-  needs a `rcAppRequestFrame` or `RC_RENDER_CONTINUOUS`, or it stops when the window goes idle. See
+  needs a `rcWindowRequestFrame` or `RC_RENDER_CONTINUOUS`, or it stops when the window goes idle. See
   [Idle CPU](#idle-cpu-rayclay-draws-only-when-something-happens). RayClay still repaints the *whole*
   window when it does draw: there is no partial-damage / dirty-region path, so a caret blink costs a full
   frame rather than a caret-sized one.
 - **Text is ASCII + Latin-1 by default.** Glyph coverage is an *engine* codepoint window: printable ASCII
   (32–126) plus the Latin-1 supplement up to `RC_FONT_LAST_CODEPOINT` (default 255). A printable codepoint
-  outside it (smart quotes, €, CJK) draws `'?'`; control characters render nothing. The window is the
+  outside it (smart quotes, €, CJK) draws `'?'` **and says so in the log, once for each distinct
+  codepoint, up to eight of them**, so a second offending character is not hidden behind the first
+  and a document pasted from the web cannot flood your log. The window is the
   engine's *and* the font's, so **both** must cover a character: a custom font containing € still shows
   `'?'` until you raise the cap, and raising the cap alone changes nothing while the bundled Latin-1 face is
   in use. `-DRC_FONT_LAST_CODEPOINT=N` widens it, at a cost **linear in the cap**: the glyph table is
@@ -765,18 +1207,18 @@ surprises you:
 This is the default, and there is nothing to set up. RayClay apps do not redraw at the display
 refresh rate forever; they draw when something actually happened (input, a resize, a DPI change, a
 tooltip or caret deadline, a resource publish, or a frame you asked for) and otherwise sleep in the
-OS event loop. An idle window costs about what an idle Qt or GTK window costs:
+OS event loop.
 
-| scene | continuous | on demand (the default) |
-|---|---:|---:|
-| a hello-world window | 1.08 CPU-s/min | **0.00** |
-| the full widgets gallery | 7.66 | **0.00** |
-| the same window on macOS | 12.57 | **0.00** |
+Continuous rendering costs real CPU for as long as the window is open, and it costs the same whether
+the scene is a hello-world label or the full widgets gallery, because the cost is the redraw rate
+rather than the content. On demand, an idle window reaches **zero admitted frames** and stays there.
+Measure both on your own box with `RAYCLAY_IDLE_STATS=1`, which prints
+admitted/waits/deadline/spurious at exit and then names the source of every admission - that is the
+comparison to trust, because it is your machine, your compositor and your app.
 
-A 60-second idle costs about **two frames**. You still author the same way: the whole UI is still
-declared top-to-bottom every frame; on-demand scheduling only changes *how often* that happens.
-Both columns are modes you can still select (`RC_RenderMode`, or `RAYCLAY_RENDER_MODE`), so the
-continuous column is what you pay if you opt back into drawing every refresh.
+You still author the same way: the whole UI is still declared top-to-bottom every frame; on-demand
+scheduling only changes *how often* that happens. Both are modes you can select (`RC_RenderMode`, or
+`RAYCLAY_RENDER_MODE`), so continuous is what you pay if you opt back into drawing every refresh.
 
 ### The one rule: if RayClay can't see it change, ask for a frame
 
@@ -789,7 +1231,7 @@ static void update(RC_App *app, void *user) {
     AppState *st = (AppState *)user;
     if (st->playing) {
         st->pos += 0.25f;
-        rcAppRequestFrame(app);      /* "I changed something. Draw once more" */
+        rcWindowRequestFrame(rcAppMainWindow(app));      /* "I changed something. Draw once more" */
     }
 }
 ```
@@ -798,22 +1240,25 @@ This is the browser's `requestAnimationFrame` bargain: nothing animates for free
 ways to ask, cheapest first:
 
 ```c
-rcAppRequestFrame(app);              /* draw one more frame, now                       */
-rcAppRequestFrameAfter(app, 1.0);    /* wake in 1s and draw; stay parked until then    */
+RC_Window *win = rcAppMainWindow(app);   /* the surface an RC_App callback is drawing  */
+
+rcWindowRequestFrame(win);               /* draw one more frame, now                   */
+rcWindowRequestFrameAfter(win, 1.0);     /* wake in 1s and draw; stay parked until then */
 opts.renderMode = RC_RENDER_CONTINUOUS;  /* draw every vsync: a game, a simulation     */
 ```
 
-Prefer `rcAppRequestFrameAfter` for anything on a clock (a 1 Hz feed, a poll): it keeps the app
+Prefer `rcWindowRequestFrameAfter` for anything on a clock (a 1 Hz feed, a poll): it keeps the app
 asleep between steps instead of burning ~60 frames to show one update. Reach for
 `RC_RENDER_CONTINUOUS` only when the picture really does change every frame; you can also flip it at
-runtime with `rcAppSetContinuousRendering(app, true)` and turn it off when the animation ends.
+runtime with `rcWindowSetContinuousRendering(rcAppMainWindow(app), true)` and turn it off when the
+animation ends.
 
 **One timer, earliest-wins.** There is a single outstanding one-shot deadline, so two *independent*
 timers coalesce to the sooner one: arm a 5 s poll and a 1 s countdown and you get one wake at 1 s, not
 two. Re-arm the later one when you are woken:
 
 ```c
-rcAppRequestFrameAfter(app, next_deadline_in_seconds(st));   /* recompute each wake */
+rcWindowRequestFrameAfter(rcAppMainWindow(app), next_deadline_in_seconds(st));   /* recompute each wake */
 ```
 
 Calling it every frame with a shrinking delay is the documented idiom and is unaffected: it is cheap and
@@ -821,8 +1266,10 @@ always correct. The case to watch is two unrelated schedules assuming they each 
 
 ### The other trap: a hand-rolled loop opts you out entirely
 
-The park lives in `rcRunApp`'s **loop**, not in the frame call. `rcRunFrame` is non-blocking by contract; it
-renders one frame and returns immediately, so this gets none of the above and spins at full speed:
+The park lives in `rcRunApp`'s **loop**, not in the frame call. While a window can draw, `rcRunFrame` polls,
+renders one frame per eligible window and returns immediately, so this gets none of the above and spins at
+full speed (it waits, up to 250 ms per call, only when no window is eligible to draw, such as a minimized
+primary):
 
 ```c
 while (rcRunFrame(app)) { }      /* ← no sleep anywhere: on-demand buys you nothing here */
@@ -860,7 +1307,7 @@ clock (a *frame* budget can't bound an event-driven run).
 **`RAYCLAY_IDLE_STATS=1` also prints one line per *admission reason***: `initial`, `input`,
 `window`, `expose`, `resource`, `app`, `deadline`, `internal`. That breakdown answers the
 opposite question, the one that is otherwise pure guesswork: **when a window refuses to park, it names
-what keeps waking it.** Your own `rcAppRequestFrame` shows up as `app`; `rcAppRequestFrameAfter` and
+what keeps waking it.** Your own `rcWindowRequestFrame` shows up as `app`; `rcWindowRequestFrameAfter` and
 RayClay's own bounded internal retries show up as `deadline`. A healthy idle app is a short list:
 `ex00` parked for four seconds on-demand reports `2 admitted (1 initial, 1 input)`.
 
@@ -878,7 +1325,7 @@ the animation frame stays registered, but a tick with nothing to draw returns wi
 rendering, which is where the cost actually was. A hidden tab is throttled by the browser either
 way.
 
-## The first number to look at: `rcAppFrameCounts()`
+## The first number to look at: `rcWindowFrameCounts()`
 
 The section above is about *how often* you draw. This one is about *how much each draw does*.
 
@@ -888,7 +1335,7 @@ much layout am I asking for, and how much of it actually reaches the screen?**
 ```c
 static void on_frame_end(RC_App *app, void *userData)
 {
-    RC_FrameCounts c = rcAppFrameCounts(app);
+    RC_FrameCounts c = rcWindowFrameCounts(rcAppMainWindow(app));
     printf("%u declared -> %u draw commands\n", c.declared, c.drawCommands);
 }
 
@@ -1238,7 +1685,7 @@ Crispness works the same way as in layout mode: the surface is *re-rendered*
 through a scaled projection rather than blitted, so geometry and icons stay vector-crisp and glyphs
 re-bake on settle; only raster `RC_Image` bitmaps magnify and soften. Layout zoom is the default
 because it's the web-app behaviour most desktop apps want; the *starting* mode is set per app
-(`RC_AppOptions.zoom.mode`), and you can flip between the two at runtime with `rcAppSetZoomMode()`,
+(`RC_AppOptions.zoom.mode`), and you can flip between the two at runtime with `rcWindowSetZoomMode()`,
 e.g. behind a "View → Zoom mode" menu item or a toolbar button:
 
 **Magnifying is only half of it: turn on `.zoom.pan` too.** Optical zoom keeps the point under the
@@ -1268,8 +1715,9 @@ Three things worth knowing before you enable it:
 
 ```c
 if (rcClicked("zoom_mode_toggle")) {                       /* in your layout / update */
-    RC_ZoomMode m = rcAppZoomMode(app);
-    rcAppSetZoomMode(app, m == RC_ZOOM_LAYOUT ? RC_ZOOM_OPTICAL : RC_ZOOM_LAYOUT);
+    RC_Window *win = rcAppMainWindow(app);
+    RC_ZoomMode m  = rcWindowZoomMode(win);
+    rcWindowSetZoomMode(win, m == RC_ZOOM_LAYOUT ? RC_ZOOM_OPTICAL : RC_ZOOM_LAYOUT);
 }
 ```
 
@@ -1294,15 +1742,16 @@ smallest value that meets your crispness need: `2` is the zoom sweet spot; reser
 single small face.
 
 Want Chrome-style zoom visibility? The change trigger is a one-liner; the runner applies zoom
-gestures *before* your callbacks, so `rcAppZoom()` already reflects a gesture from this frame:
+gestures *before* your callbacks, so `rcWindowZoom()` already reflects a gesture from this frame:
 
 ```c
-float z = rcAppZoom(app);                                  /* in updateCallback      */
+RC_Window *win = rcAppMainWindow(app);
+float z = rcWindowZoom(win);                      /* in updateCallback */
 if (z != st->prevZoom) {
     if (st->prevZoom > 0) st->badgeSecs = 1.5f;   /* first tick only seeds it */
     st->prevZoom = z;
 }
-if (st->badgeSecs > 0) st->badgeSecs -= rcAppFrameTime(app);
+if (st->badgeSecs > 0) st->badgeSecs -= rcWindowFrameTime(win);
 ```
 
 then, while `badgeSecs > 0`, float a small "125%" pill over the UI (a `.floating` box with
@@ -1313,11 +1762,11 @@ Configure or disable it via `RC_AppOptions.zoom` (an `RC_ZoomOptions`: `.disable
 `.bindZoomReset`: `RC_Key`
 values such as `RC_KEY_I`; leave them `RC_KEY_NONE` (`0`) for the default bindings), and
 per-gesture switches; zero-init means on, 25–500%, layout mode, pan off). Read or drive it at runtime with
-`rcAppZoom()` / `rcAppSetZoom()` (e.g. a "Reset zoom" menu item), and read the display's
+`rcWindowZoom()` / `rcWindowSetZoom()` (e.g. a "Reset zoom" menu item), and read the display's
 device-pixel-ratio with `rcGetContentScale()`. On the web the zoom *gestures* are inert (the
-browser owns zoom in a tab), while `rcAppSetZoom()` still applies (a reflow in the default layout
+browser owns zoom in a tab), while `rcWindowSetZoom()` still applies (a reflow in the default layout
 mode) and `rcGetContentScale()` returns the display's true device-pixel-ratio there (e.g. `2.0` on a
-2× display), now that the web backing store renders at device pixels.
+2× display), because the web backing store renders at device pixels.
 
 **To see your app at another zoom without touching its code, set `RAYCLAY_ZOOM=<float>`.** It replaces
 the starting zoom for that run, so `RAYCLAY_ZOOM=1.5 ./build-desktop/myapp` opens at 150%: one binary
@@ -1335,15 +1784,15 @@ guessed at**, again with one warning, so a typo (`2O` for `2.0`) shows up as a s
 instead of a degenerate layout that reads like a RayClay bug. An app that sets `.disabled` is never
 forced into zoom by the environment.
 
-> **`rcGetContentScale()` reads framebuffer ÷ window size**, which is the true DPR on macOS, Wayland
-> and the web. **On Win32 and X11 it is `1.0` at every DPI, and that is not a missing feature, it is
-> where the desktop scale went.** GLFW spends the HiDPI factor on the WINDOW SIZE there (it multiplies
-> the size you asked for by the monitor's content scale), while macOS, Wayland and web spend the same
-> factor on the FRAMEBUFFER instead. The ratio is only informative where the factor landed on the
-> framebuffer.
-> **So never multiply either size by a display scale to get device pixels.** On Win32/X11 the window
-> size is already device pixels; on macOS the framebuffer is. **The device-pixel count is the
-> framebuffer size on every platform, full stop**: multiplying applies the factor twice.
+> **`rcGetContentScale()` reads framebuffer ÷ window size.** Where a platform spends the HiDPI factor
+> on the FRAMEBUFFER, that ratio is the true DPR. Where it spends the same factor on the WINDOW SIZE
+> instead - multiplying the size you asked for by the monitor's content scale - the ratio reads `1.0`
+> at every DPI, and that is not a missing feature, it is where the desktop scale went. **The ratio is
+> only informative where the factor landed on the framebuffer**, so do not treat it as a DPR you can
+> rely on cross-platform.
+> **So never multiply either size by a display scale to get device pixels.** Whichever of the two the
+> platform spent the factor on, it has already been spent. **The device-pixel count is the framebuffer
+> size on every platform, full stop**: multiplying applies the factor twice.
 
 ## Headless / CI
 
@@ -1358,6 +1807,11 @@ antialiasing count for one process (so you can compare arms without rebuilding, 
 spell *off*), and **`RAYCLAY_GFX_STATS=1`** prints one line per window naming the sample count you
 asked for, the one the framebuffer actually gave you, and the backing-store size in device pixels.
 Both are silent unless you ask. See [api-notes.md ▸ RC_GFX_MSAA_SAMPLES](api-notes.md).
+
+One is for laying out a phone screen on a desk: **`RAYCLAY_SAFE_INSETS=top,right,bottom,left`** (window
+pixels, like the real hook) makes `rcGetSafeAreaInsets()` and `rcViewport().safe` report those bands on a
+desktop, where the host reports none, so a 393x852 window shows the status-bar and home-indicator bands a
+device would spend. A phone keeps its own numbers; a malformed value is ignored.
 
 ```bash
 RAYCLAY_MAX_FRAMES=3 ./build-desktop/myapp   # runs 3 frames, exits 0
@@ -1406,23 +1860,31 @@ by frames can finish its budget having drawn fewer times than it counted.
 fails loudly and exits non-zero; it does not pretend to have rendered:
 
 ```
-RAYCLAY[ERROR]: rc_window (GLFW): Failed to detect any supported platform (0x1000E)
-RAYCLAY[ERROR]: rc_window: glfwInit failed
+RAYCLAY[ERROR]: rc_window (host): initialize video/events: No available video device
 RAYCLAY[ERROR]: rcInitWindow: window-system init failed
 RAYCLAY[ERROR]: rcAppCreate: window creation failed        # exit 1
 ```
 
+**The text after `initialize video/events:` is the windowing system's own, not RayClay's**, so it
+varies by platform and by cause. Match on the RayClay half of the line and treat the tail as detail.
+
+**Your host may also print untagged lines around these.** The same run on a Linux desktop emits
+`error: XDG_RUNTIME_DIR is invalid or not set in the environment.` twice, with no `RAYCLAY[...]`
+prefix, because it comes from the system libraries rather than from RayClay. A CI step that fails on
+`RAYCLAY[ERROR]` will not see those; do not be surprised by them in the log.
+
 **If you want to reproduce that on a Linux desktop, unset all three of `DISPLAY`, `WAYLAND_DISPLAY` **and**
-`XDG_RUNTIME_DIR`.** GLFW's Wayland backend does not need `WAYLAND_DISPLAY`; it falls back to the default
+`XDG_RUNTIME_DIR`.** A Wayland client does not need `WAYLAND_DISPLAY`: it falls back to the default
 socket `wayland-0` inside `$XDG_RUNTIME_DIR`, so dropping only the first two leaves your app quietly running
-against your real desktop and "proves" nothing.
+against your real desktop and "proves" nothing. That is a property of the Wayland client library
+underneath, so it holds whichever windowing host RayClay was built with.
 
 Use the smoke test for what it is good at (catching a crash, an assert, a bad font path, an unbalanced
 element tree, and add a real oracle on top if you need to prove pixels:
 
 - **Give CI a display** (`xvfb-run -a -s "-screen 0 1280x800x24" ./myapp`) and capture the window to compare.
-  On a Linux box with a live Wayland session, `xvfb-run` **alone does not isolate you**: GLFW prefers
-  Wayland and will use the real compositor. Use
+  On a Linux box with a live Wayland session, `xvfb-run` **alone does not isolate you**: the window
+  host prefers Wayland and will use the real compositor. Use
   `env -u WAYLAND_DISPLAY -u XDG_RUNTIME_DIR xvfb-run -a ./myapp` to actually land on X11.
 - **Watch stderr, not just the exit code.** RayClay reports layout and asset problems there and still exits 0
   An unbalanced element tree logs *once* and the run stays "green" for every frame after it. Because it is
@@ -1435,10 +1897,10 @@ element tree, and add a real oracle on top if you need to prove pixels:
   add today is a carve-out that hides a real warning later.
 **ONE CATEGORY OF DIAGNOSTIC IS NOT ABOUT YOUR APP, AND THE ABSOLUTE RULE HAS TO KNOW IT.** RayClay
   FORWARDS every error the windowing system raises, and some of those are recoverable conditions a
-  correct app still hits. They are all tagged **`rc_window (GLFW):`**, a single, greppable category:
+  correct app still hits. They are all tagged **`rc_window (host):`**, a single, greppable category:
 
 ```
-RAYCLAY[WARNING]: rc_window (GLFW): X11: Standard cursor shape unavailable (0x1000B)
+RAYCLAY[WARNING]: rc_window (host): X11: Standard cursor shape unavailable (0x1000B)
 ```
 
   **The one you will actually meet is a bare X server with no cursor theme**, so the standard
@@ -1446,15 +1908,30 @@ RAYCLAY[WARNING]: rc_window (GLFW): X11: Standard cursor shape unavailable (0x10
   reports each one once per run; a genuine window-system failure stays `ERROR`. Either way the tag
   is the same, so the filter below does not need to know the difference.
 
-  **SO EXCLUDE THAT ONE CATEGORY AND KEEP EVERYTHING ELSE ABSOLUTE.** This is not the growing
-  carve-out list the paragraph above warns against; it is one tag with one source
-  (`rc_window (GLFW):` is emitted from exactly one place in the library), and it costs you nothing,
-  because **a window failure that actually matters is not tagged that way and fails the exit code
-  instead**: `rc_window: glfwInit failed`, `rcInitWindow: …`, `rcAppCreate: window creation failed`
-  all lack the `(GLFW)` marker and all end the run non-zero.
+  **SO EXCLUDE THAT ONE CATEGORY, KEEP EVERYTHING ELSE ABSOLUTE - AND KEEP THE EXIT CODE.** The tag
+  is emitted from exactly one function, so the filter stays a single line rather than the growing
+  carve-out list the paragraph above warns against. What it costs you is not nothing, and the honest
+  version is worth two sentences:
+
+  **A startup failure is still caught, because the layer above re-reports it without the tag.** The
+  block earlier in this section is the whole log of a run with no display: the `(host)` line is
+  followed by `rcInitWindow: window-system init failed` and `rcAppCreate: window creation failed`,
+  neither tagged, and the run exits non-zero. Filtering the tag loses the detail, not the failure.
+
+  **The tag is reserved for diagnostics a CORRECT app still hits**, and a genuinely fatal window
+  failure deliberately uses the UNTAGGED `rc_window:` form so this filter cannot swallow it. That
+  holds for the ones with no other symptom too: a failed present or a failed event wait log untagged
+  and make `rcRunApp` return non-zero rather than ending like a clean quit.
+  **Fail your CI step on a non-zero exit as well as on the log** anyway. It costs one line and it is
+  the half that does not depend on anyone getting a log tag right.
+
+  **THE TAG NAMES THE ROLE, NOT THE WINDOWING LIBRARY, AND THAT IS LOAD BEARING FOR YOU.** It reads
+  `(host)` on every backend RayClay ships, so this recipe does not change when the library's internal
+  window host does - and RayClay's host is not part of its public surface, so you should never have to
+  care which one you got. Match on `(host)` in a CI script and it will not need updating again.
 
 ```bash
-if ./myapp 2>&1 | grep -v 'rc_window (GLFW):' | grep -q 'RAYCLAY\[\(WARNING\|ERROR\)\]'; then
+if ./myapp 2>&1 | grep -v 'rc_window (host):' | grep -q 'RAYCLAY\[\(WARNING\|ERROR\)\]'; then
     echo "RayClay reported a problem"; exit 1
 fi
 ```
@@ -1472,7 +1949,7 @@ env -u WAYLAND_DISPLAY -u XDG_RUNTIME_DIR \
 ```
 
   **Measured, and the obvious diagnosis is wrong.** Keeping `XDG_RUNTIME_DIR` set also makes the
-  errors vanish, but only because GLFW then reaches your REAL Wayland compositor, which is the trap
+  errors vanish, but only because the app then reaches your REAL Wayland compositor, which is the trap
   warned about above rather than a fix. Point it at an EMPTY directory instead and you land on Xvfb
   with the variable present and the errors return, which is what isolates the cursor theme as the
   cause. The count depends on your X server's theme, not on your app, so do not pin it.

@@ -18,4 +18,20 @@ CMakeLists.txt text
 *.ico  binary
 
 rayclay.h  linguist-language=C
+
+# Both window hosts ship here as vendored third-party source. Without these two
+# lines GitHub counts every file in them as first-party C and the language bar
+# stops describing what this repository is. Linguist's default vendor list
+# only recognises conventionally named vendor directories, and here both
+# trees sit at the root, so neither is caught by default and each needs naming.
+SDL3/**    linguist-vendored=true
 glfw/**    linguist-vendored=true
+
+# THE VENDORED TREE IS STORED VERBATIM. `* text=auto eol=lf` above is right for
+# rayclay.h and wrong for a third party's files: SDL3/ carries Windows-toolchain
+# files with CRLF (gradlew.bat, compile_shaders.bat, .masm, one .m) that nothing
+# here builds. Left to the default, git would normalise them on the first
+# commit and rewrite them on the next checkout - so a regenerated copy of the
+# tree, which is byte-copied, would come back changed on EVERY run and never
+# converge.
+SDL3/**    -text
