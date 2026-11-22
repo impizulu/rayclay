@@ -1,0 +1,15 @@
+<!-- RayClay's own drawing (ex24_messenger): the double delivery tick as two
+     filled outlines, not strokes. A chat draws it on every message it sent, and
+     two fills are two draw commands where a stroked pair with round joins and
+     caps is ten. -->
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="currentColor"
+  stroke="none"
+>
+  <polygon points="1.33 13.17 6.54 18.38 15.71 8.13 14.29 6.87 6.46 15.62 2.67 11.83" />
+  <polygon points="9.93 16.57 11.73 18.37 21.2 8.15 19.8 6.85 11.67 15.63 11.27 15.23" />
+</svg>

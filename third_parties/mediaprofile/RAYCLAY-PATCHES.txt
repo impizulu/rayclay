@@ -1,0 +1,191 @@
+RayClay patches to the vendored media profile decoders
+======================================================
+
+This directory is dr_mp3 0.7.4, dr_flac 0.13.4 and stb_vorbis 1.22, each pinned
+by commit, size, sha256 and git blob id in PINS, with its license text in
+LICENSES/, and libwebp 1.6.0's decoder and demux under libwebp/, each of its
+87 files pinned by size and sha256 in PINS (with the signed release tarball
+they came from), its COPYING, PATENTS and AUTHORS at libwebp/'s root; and
+nestegg's WebM demuxer under nestegg/ and libopus 1.6.1's decoder under opus/,
+each file pinned the same way. dr_mp3, libwebp, nestegg and libopus are
+vendored PRISTINE. dr_flac.h and stb_vorbis.c carry the twelve
+patches under "Patches" below, and no other edit (2026-11-05).
+Patches 1 to 7 and 11 each fix undefined behavior or an assert that a
+fuzzed file reached in these files; 8 to 10 close the overflows a
+review of those found beside them, which upstream had closed already; 12 ends
+a data race ThreadSanitizer found between two streams opened at once. Each
+takes upstream's own fix where upstream has one (its commit named), and each is
+marked "RayClay patch N" at its site. Each of 1 to 7 was reached by a file;
+those for 1 and 3 to 6 were replayed against the patched files (clean) and
+the pristine ones (each fails at its site); 8 to 10 were found by reading,
+not by a file. PINS pins the shipped,
+patched file (size, sha256) beside upstream's download (upstream_size,
+upstream_sha256). Every file must match its PINS sha256 (README.md's list,
+`shasum -a 256 -c`), so an edit not listed here shows as a mismatch, and PINS
+lists every file under libwebp/. A version bump re-applies each patch upstream
+has not taken, and drops each it has.
+
+Patches (each: the site in upstream 1.22 / 0.13.4, what a hostile file did,
+the fix, its source):
+  1. stb_vorbis.c Mapping, submap_floor[15] / submap_residue[15]: a valid
+     stream may declare 16 submaps (4 bits + 1). submap_floor[15] overwrote
+     submap_residue[0] after that index's residue_count check (and
+     submap_residue[15] fell in the struct's padding), so a mapping could carry
+     a residue index past residue_count into decode_residue: a read past the
+     residue tables, inside the arena (UBSan out-of-bounds-index, 4107/4108;
+     ASan blind). Both are [16]: upstream dev 30e553a240e4 (its struct reorder
+     not taken).
+  2. stb_vorbis.c lookup1_values (1244, 1248): a float past INT_MAX cast to
+     int (float-cast-overflow). Its comparisons in double: upstream dev
+     b9c73af9046c (its float_to_sample rewrite not taken: the integer
+     conversion is compiled out). It also opens the valid lookup-type-1
+     codebooks 1.22's float guess refused (past about 2 million entries at one
+     dimension, rare large books at more); no stream 1.22 opened changes.
+  3. stb_vorbis.c codebook_decode_scalar_raw (1699): 1 << 31 for a 31-bit
+     codeword (shift-base), then its - 1 (signed-integer-overflow); a 32-bit
+     one shifted by 32. The unsigned mask (2u << (len - 1)) - 1u: upstream dev
+     b9c73af9046c (its float_to_sample rewrite not taken).
+  4. stb_vorbis.c get_window (3061): `len <<= 1` of a negative length
+     (shift-base): a shortened last frame makes it negative. The length is
+     compared with half of each block size instead, the same answer for every
+     defined length. Ours (upstream unreported).
+  5. stb_vorbis.c seek_to_sample_coarse (4743): assert(left.page_end <
+     right.page_start) on a stream's page bounds aborted a Debug build. A seek
+     failure instead: upstream dev ee8dbb8d97ab.
+  6. stb_vorbis.c stb_vorbis_seek (4928, 4929): two asserts on the frame a seek
+     lands in aborted a Debug build. A seek failure instead, the bounds
+     compared unsigned. Ours (upstream unreported).
+  7. dr_flac.h drflac__seek_to_pcm_frame__binary_search_internal (6319): a
+     double step from the stream's offsets (negative, NaN or past 2^64) cast
+     to drflac_uint64 (float-cast-overflow). Clamped to the room up to the
+     range's end first, which the next line's clamp reaches anyway; a step
+     that is not positive is the bisection's. Ours (upstream unreported).
+  8. stb_vorbis.c start_decoder, a codebook's entries x dimensions (3868,
+     3886): a setup header may declare up to 2^24 x 2^16, so the int product
+     overflowed (lookup type 2) and a size truncated into setup_malloc's int
+     left the multiplicands an arena block smaller than the floats then
+     written into it (lookup type 1). Bounded at 2^18: upstream dev's
+     CODEBOOK_LIMIT.
+  9. stb_vorbis.c decode_residue (2117) and start_decoder's temp sizing
+     (4172): a type-2 residue is one vector of n x channels, but 1.22 bounded
+     it at n x 2 whatever the channel count and reserved temp memory for n, so
+     a decode could ask the arena for more than setup kept. It decodes n x ch
+     and setup reserves for that: upstream dev.
+ 10. stb_vorbis.c setup_malloc, setup_temp_malloc (950, 969): a negative
+     size, or one whose rounding to 8 overflows, passed the arena check (its
+     sum could wrap) and moved the arena's cursor backwards. Refused, and the
+     room compared without the sum: upstream dev's guard, except that a size
+     of 0 keeps 1.22's result (dev refuses it, which the bridge's arena retry
+     would report as out of memory).
+ 11. stb_vorbis.c get_seek_page_info (4682-4686): getn's results were not
+     checked, so after a short read header[] and lacing[] held stale bytes
+     and the page was parsed from them; and header[9] << 24 shifted a uint8
+     promoted to int into the sign bit (shift-base) for a top granule byte of
+     0x80 or more, on valid files too (granule -1 is a legal Ogg value). Both
+     reads checked: upstream dev 29a7b3ec0496 with its typo fix cee6b375e0fb.
+     The byte cast to uint32: upstream dev 46614470ccb9's form for
+     get32_packet (dev's 64-bit sample offsets, 4def4559dca2, not taken).
+ 12. stb_vorbis.c crc_table and crc32_init (991-1001, called at 3707):
+     start_decoder filled the global crc_table at every open, so a stream
+     opened on one thread wrote it while another stream's page checks read it:
+     a data race (ThreadSanitizer, with sixteen media opened at once on
+     Linux; the values written are the same, the race is still
+     undefined behavior).
+     The table is constants, the 256 values crc32_init computed, and
+     start_decoder no longer calls it. Ours: upstream master (v1.24,
+     9f755b604db3, 2026-11-12) still calls it at every open.
+
+How RayClay builds them without editing them beyond those, all in its own bridge
+(rc_media_profile.c, RayClay's own code beside this file):
+  - One translation unit includes the three with their implementation macros
+    (DR_MP3_IMPLEMENTATION, DR_FLAC_IMPLEMENTATION, stb_vorbis.c whole).
+  - DRMP3_API and DRFLAC_API are defined `static` before the includes, so no
+    dr_mp3 or dr_flac name leaves the bridge's object. stb_vorbis.c declares its
+    calls `extern` with no such macro: the bridge renames each one it compiles
+    to rci_media_profile_stbv_* before the include, so none of them can
+    collide with an application's own stb_vorbis.
+  - The warnings the three would raise under RayClay's warning flags are left
+    to the compiler's defaults by naming this directory a SYSTEM include
+    directory (the profile's CMakeLists.txt), never by an edit: RayClay's rule
+    ("a pragma at its include, never an edit") applied to whole files. The
+    bridge's own code still takes every flag (gcc 16 and clang 22, -Werror:
+    0 diagnostics on import).
+  - STB_VORBIS_NO_PUSHDATA_API and STB_VORBIS_NO_INTEGER_CONVERSION compile out
+    what the profile does not call; DR_MP3_NO_STDIO and DR_FLAC_NO_STDIO drop
+    the two decoders' own file openers (the bridge hands them its reads);
+    DR_MP3_ONLY_MP3 drops dr_mp3's layer I and II decoder (the player refuses
+    MP1 and MP2 by name). dr_flac keeps its Ogg reader: Ogg FLAC plays.
+    stb_vorbis has no read callback: it reads the bridge's FILE stream itself,
+    inside a fixed arena the bridge gives it (stb_vorbis_alloc).
+  - stb_vorbis 1.22 trusts the lengths in a stream's comment header: a vendor
+    or comment length that is negative or runs past the packet makes it write
+    outside its arena, and a comment list the arena cannot hold makes its
+    vorbis_deinit read a null list (a hostile Ogg file crashed the process).
+    The guard is at the call site: the bridge reads the comment header itself
+    first, page by page as stb_vorbis's own reader will, refuses a stream on
+    which the two readings could part, holds every length to the bytes left in
+    the packet, and gives the arena the comments' exact bytes beyond the
+    setup's budget, so none of those allocations can fail
+    (rci_media_profile_vorbis_comments). A version bump re-reads
+    start_decoder's comment parse and its page reader against it.
+
+How RayClay builds libwebp without editing it (the WebP bridge,
+rc_image_webp_profile.c, RayClay's own code beside this file, and the
+profile's CMakeLists.txt):
+  - Each of its .c files is its own object in the profile archive, compiled
+    as upstream's CMake compiles it (its root the include directory, no
+    config.h), with the compiler's warnings off (-w, /w): upstream's code is
+    held to upstream's own warning set, as the SYSTEM directory holds the
+    three decoders above. Its SIMD code compiles where the target's baseline
+    has it (SSE2 on x86-64, NEON on Arm64; MSVC also its SSE4.1 and AVX2,
+    which cpu.c checks at run time), and no file needs flags of its own.
+    Each function is its own section (-ffunction-sections), and each datum
+    too except on MinGW, whose GCC would store every zero-initialized one in
+    the EXE (RayClay's own build has the same rule).
+  - Every name libwebp gives external linkage is renamed into RayClay's
+    space, rci_image_webp_lib_<name>, by rc_image_webp_names.h, which the
+    profile force-includes into each libwebp object and the bridge (-include,
+    /FI): an application that links its own libwebp links beside the profile,
+    never against it. The list is generated
+    from the objects of an x86-64 build with SSE4.1 and AVX2 and an Arm64
+    build; the profile's build checks, where a nm reads its archive, that the
+    archive defines no global outside rci_. The five names upstream #defines
+    to a static stub under WEBP_REDUCE_CSP (below) are never globals here, so
+    the list leaves them out.
+  - Threads off (no WEBP_USE_THREAD): one synchronous decode on the caller's
+    thread, as every other image format.
+  - WEBP_MAX_ALLOCABLE_MEMORY, libwebp's own bound on any one allocation, is
+    192 MiB (a compile definition; upstream's default is 16 GiB on 64-bit).
+    RayClay's decode caps bound pixels: the largest allocation a capped image
+    makes is VP8L's ARGB buffer of a 50,000,000-pixel lossless still,
+    (pixels + 17 rows) x 4 bytes: 201,109,560 bytes at 16377 x 3053, the
+    largest, and 201,052,176 for 16383 x 3051, the widest, both under
+    the cap. Measured at the earlier 20,000,000-pixel cap
+    (the bridge and these objects as the profile builds them, gcc 16.2.1,
+    malloc and calloc wrapped; files from a real encoder, Pillow 12.3.0's
+    libwebp 1.6.0): a 16383 x 1220 lossless still 81,063,084 bytes, 4472 x 4472
+    lossless 80,299,232, a 16383 x 1220 lossy still with alpha 22,029,981, a
+    2560 x 2560 animation 26,388,480 (lossless) and 26,214,400 (lossy). They
+    do not bound the prefix-code tables a lossless bitstream sizes by the code
+    groups it names, which a small file can make large: those meet this bound
+    instead, once a still and once each frame of an animation, so raising it
+    for the still cap raised them too. Each group takes up to 5,004 four-byte
+    entries (vp8l_dec.c's kTableSize at an 11-bit color cache), so the bound
+    admits 10,058 groups, 201,320,928 bytes of tables for the moment a still or
+    a frame decodes (5,029 groups, 100,660,464 bytes, under the earlier 96
+    MiB). Computed from the source, not measured with a crafted file.
+  - WEBP_REDUCE_SIZE and WEBP_REDUCE_CSP, upstream's own size knobs (compile
+    definitions, no file edited): no scaling, and only the RGBA-order output
+    modes. The bridge decodes unscaled to MODE_RGBA, still and animated, so
+    neither removes anything it calls.
+
+A version bump: replace the three files and LICENSES/ from the new commits, check
+each against two independent sources as PINS's header says, rewrite PINS, then
+give the profile a new TAG and write its anchor line into the profile's
+rc_media_profile.h and into rayclay.h, where rcMediaOpen expands.
+A libwebp bump: replace libwebp/ from the new signed tarball (the files its
+decoder and demux build from, less the MIPS ones), verify the signature and
+compare each file with the release tag's commit, rewrite its [[pin.files]]
+and README.md's list of sha256 sums, regenerate rc_image_webp_names.h from the new
+objects, and write every anchor line again from the new TAG (the WebP one into
+rc_image_webp_profile.h and rayclay.h).

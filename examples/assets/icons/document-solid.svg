@@ -1,0 +1,6 @@
+<!-- Lucide's file, filled, its folded corner set apart by a gap, so a list's small
+     icon reads as a sheet in the color of its kind. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+  <path d="M6 2h7.500v5a1.500 1.500 0 0 0 1.500 1.500h5V20a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z"/>
+  <path d="M15 2.400 19.600 7H15z"/>
+</svg>

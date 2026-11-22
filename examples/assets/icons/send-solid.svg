@@ -1,0 +1,12 @@
+<!-- RayClay's own drawing (ex24_messenger): a solid paper plane, the composer's
+     send button, one filled outline. -->
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="currentColor"
+  stroke="none"
+>
+  <polygon points="3 20.5 22 12 3 3.5 3 10.2 15.5 12 3 13.8" />
+</svg>

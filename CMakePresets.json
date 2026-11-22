@@ -4,7 +4,7 @@
   "configurePresets": [
     {
       "name": "default",
-      "displayName": "Default (Debug; the library, plus examples/tests if this branch carries them)",
+      "displayName": "Default (Debug; the library and the examples)",
       "binaryDir": "${sourceDir}/build",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
@@ -38,11 +38,17 @@
     {
       "name": "default",
       "configurePreset": "default",
-      "description": "Every build preset carries an explicit `jobs`. WHY: with the Unix Makefiles generator a bare `--parallel` passes `make -j` with NO argument, which is UNBOUNDED - it is NOT one job per core. Make then spawns every recipe the dependency graph allows, which has OOM-frozen a 30 GB machine. CAVEAT: `jobs` is honoured only by `cmake --build --preset <name>`; it is BYPASSED by `cmake --build <dir> --parallel`, so pass an explicit count with the directory form.",
+      "description": "Every build preset carries an explicit `jobs`. WHY: with the Unix Makefiles generator a bare `--parallel` passes `make -j` with NO argument, which is UNBOUNDED - it is NOT one job per core. Make then spawns every recipe the dependency graph allows, which has OOM-frozen a 30 GB machine. CAVEAT: `jobs` is honored only by `cmake --build --preset <name>`; it is BYPASSED by `cmake --build <dir> --parallel`, so pass an explicit count with the directory form.",
       "jobs": 8
     },
-    { "name": "desktop", "configurePreset": "desktop", "jobs": 8 },
-    { "name": "web", "configurePreset": "web", "jobs": 8 }
+    {
+      "name": "desktop",
+      "configurePreset": "desktop",
+      "description": "`configuration` names the build type to a multi-config generator (Visual Studio, Windows' default, and Ninja Multi-Config), which ignores CMAKE_BUILD_TYPE and would otherwise build Debug; a single-config generator ignores it.",
+      "configuration": "Release",
+      "jobs": 8
+    },
+    { "name": "web", "configurePreset": "web", "configuration": "MinSizeRel", "jobs": 8 }
   ],
   "testPresets": [
     {

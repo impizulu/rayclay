@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="146.2857 5.2857 731.4286 731.4286" width="1024" height="1024">
+  <!--
+    Monochrome lockup of the RayClay mark. A single-color REDUCTION of the
+    full-color logo (rayclay-logo.svg), not a new design: every coordinate is
+    derived from it and the viewBox matches it, so the two marks
+    frame identically.
+
+    Every paint is currentColor. That keeps the icon RUNTIME-TINTABLE: the
+    generator emits rcIcon<Name>(float size, RC_Color color) for an
+    all-currentColor SVG and degrades to rcIcon<Name>(float size) the moment one
+    paint bakes a concrete color. Both consumers draw this TINTED, so losing the
+    color parameter would be a breaking change, not a cosmetic one.
+
+    THREE REDUCTIONS A COLOR-TO-MONO CONVERSION HAS TO MAKE. Getting them wrong
+    is what makes a naive conversion read badly, so each is recorded with the
+    measurement that settled it.
+
+    1. THE EARS ARE TRUNCATED AT THE HEAD EDGE, AND SHARE THE HEAD'S CONTOUR.
+       In the color art the head is an OPAQUE ellipse painted over the ear, so
+       only the tip shows. Outlined, the whole sliver showed and the ears read as
+       antennae. Fixed by INTERSECTION, not a clip-path (which this parser
+       refuses): of the three ear vertices only the tip is outside the head
+       ellipse (inside-ness 2.194, against 0.840 and 0.790), and the two edges
+       cross it at (314.45, 371.16) and (312.72, 415.63).
+       Drawing them as separate FILLED slivers beside an OUTLINED head still
+       failed - it mixes two visual languages, where the color art has both
+       solid and merged. So head and ears are ONE continuous contour.
+
+    2. THE HEAD IS ONLY ITS LOWER ARC. The hat covers the top in the color art;
+       outlined, a full ellipse drew a circle straight through the hat. The arc
+       runs between the head's own boundary points at the brim height,
+       x = 321.04 and 702.96 at y = 345, so head and brim share endpoints exactly
+       and close the shape with no doubled line.
+
+    3. STROKE WEIGHT IS SET BY THE SMALLEST CONSUMER, NOT BY TASTE. The titlebar
+       draws this at 22px. In a 731-unit viewBox, stroke-width 18 is 0.54 DEVICE
+       PIXELS there - sub-pixel, so it renders as faint gray mush. 34 gives
+       1.02px at 22px and 6.5px at 140px, legible at both. Measured against the
+       previous mono at the same size, which used 12-16 in a 1024 viewBox
+       (0.26-0.34px at 22px) and was an unreadable blob.
+
+    Deliberately sparse: an icon is re-stroked from its points EVERY FRAME, so
+    every point costs every frame (a stroke takes any number of points; a fill
+    stops at RC_ICON_MAX_PTS, 256). Nose, blush, tongue, brows, lobe diamonds and bell
+    dashes are dropped - detail that reads at 140px is mud at 22px.
+
+    Consumers: the template's titlebar (22px) and content panel (140px), both
+    tinted; and examples/assets/icons/rc_icons_rayclay_logo_mono.h.
+  -->
+
+  <g fill="none" stroke="currentColor" stroke-width="34" stroke-linecap="round" stroke-linejoin="round">
+    <!-- head AND ears as one continuous silhouette: down the left cheek, out to
+         the ear tip and back, around the jaw, out to the right ear and back -->
+    <path d="M321.04 345
+             A 200 185 0 0 0 314.45 371.16
+             L 228 322 L 312.72 415.63
+             A 200 185 0 0 0 711.28 415.63
+             L 796 322 L 709.55 371.16
+             A 200 185 0 0 0 702.96 345"/>
+    <!-- hat brim, sharing the head's endpoints -->
+    <path d="M321.04 345 Q512 398 702.96 345"/>
+    <!-- hat: two open lobes rising from the bells to the center peak -->
+    <path d="M321.04 345 C300 318 248 242 226 192 C310 162 460 162 512 207"/>
+    <path d="M702.96 345 C724 318 776 242 798 192 C714 162 564 162 512 207"/>
+    <!-- grin -->
+    <path d="M395 515 Q512 640 645 495"/>
+  </g>
+
+  <!-- bells and eyes: filled, because an outline at 22px collapses to a blob -->
+  <circle cx="220" cy="184" r="30" fill="currentColor"/>
+  <circle cx="804" cy="184" r="30" fill="currentColor"/>
+  <circle cx="454" cy="450" r="27" fill="currentColor"/>
+  <circle cx="604" cy="450" r="27" fill="currentColor"/>
+</svg>

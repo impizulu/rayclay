@@ -1,0 +1,7 @@
+<!-- Lucide's folder, redrawn solid in three tones for a file manager's tile: the
+     back with its tab, the front panel, and a highlight along the front's top edge. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <path fill="#2f8fe6" d="M9 8h15.5a5 5 0 0 1 4 2l3.5 4.6a3 3 0 0 0 2.400 1.200H55a5 5 0 0 1 5 5V51a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5V13a5 5 0 0 1 5-5z"/>
+  <path fill="#5bb4f6" d="M9 22h46a5 5 0 0 1 5 5v24a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5V27a5 5 0 0 1 5-5z"/>
+  <path fill="#8ccbf9" d="M9 22h46a5 5 0 0 1 5 5v1a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v-1a5 5 0 0 1 5-5z"/>
+</svg>

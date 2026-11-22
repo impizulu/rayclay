@@ -1,0 +1,14 @@
+<!-- RayClay's own drawing (ex24_messenger): the no-photo avatar, a head and
+     the part of a broad ellipse that falls inside the avatar's circle, so the
+     shoulders meet its rim the way a cropped photo would. -->
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="currentColor"
+  stroke="none"
+>
+  <circle cx="12" cy="9.2" r="4.3" />
+  <polygon points="18.67 21.98 17.31 22.76 15.11 23.59 13.57 23.9 12 24 10.43 23.9 8.14 23.36 6.69 22.76 5.33 21.98 3.86 20.8 4.55 19.3 5.18 18.39 6.33 17.18 7.22 16.52 9.24 15.55 10.88 15.17 12.56 15.12 14.23 15.39 15.8 15.97 17.67 17.18 18.47 17.96 19.45 19.3 20.14 20.8" />
+</svg>

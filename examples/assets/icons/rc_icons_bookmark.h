@@ -1,0 +1,97 @@
+#ifndef RC_ICON_BOOKMARK_H
+#define RC_ICON_BOOKMARK_H
+
+#include "rc_icons_common.h"
+
+/*
+    Generated from bookmark.svg (Lucide). The layout pass owns placement; the
+    library draws the icon through the rc_gfx seam during RayClay's custom render pass. Source viewBox: 24x24.
+*/
+static inline void rcDrawIconBookmark(RC_BoundingBox bounds,
+                                      RC_Color color,
+                                      const void *userData) {
+    (void)userData;
+    const float viewBox = 24.0f;
+    const float stroke  = 2.0f;
+
+    static const RC_IconPoint path0[] = {
+        { 17.0f, 3.0f },
+        { 17.261f, 3.017f },
+        { 17.518f, 3.068f },
+        { 17.765f, 3.152f },
+        { 18.0f, 3.268f },
+        { 18.218f, 3.413f },
+        { 18.414f, 3.586f },
+        { 18.587f, 3.782f },
+        { 18.732f, 4.0f },
+        { 18.848f, 4.235f },
+        { 18.932f, 4.482f },
+        { 18.983f, 4.739f },
+        { 19.0f, 5.0f },
+        { 19.0f, 20.0f },
+        { 18.991f, 20.13f },
+        { 18.966f, 20.258f },
+        { 18.924f, 20.382f },
+        { 18.866f, 20.499f },
+        { 18.794f, 20.607f },
+        { 18.708f, 20.706f },
+        { 18.61f, 20.792f },
+        { 18.502f, 20.865f },
+        { 18.385f, 20.923f },
+        { 18.261f, 20.965f },
+        { 18.134f, 20.991f },
+        { 18.003f, 21.0f },
+        { 17.873f, 20.992f },
+        { 17.745f, 20.967f },
+        { 17.621f, 20.925f },
+        { 17.504f, 20.868f },
+        { 12.992f, 18.29f },
+        { 12.759f, 18.176f },
+        { 12.513f, 18.094f },
+        { 12.259f, 18.043f },
+        { 12.0f, 18.027f },
+        { 11.741f, 18.043f },
+        { 11.487f, 18.094f },
+        { 11.241f, 18.176f },
+        { 11.008f, 18.29f },
+        { 6.496f, 20.868f },
+        { 6.379f, 20.925f },
+        { 6.255f, 20.967f },
+        { 6.127f, 20.992f },
+        { 5.997f, 21.0f },
+        { 5.866f, 20.991f },
+        { 5.739f, 20.965f },
+        { 5.615f, 20.923f },
+        { 5.498f, 20.865f },
+        { 5.39f, 20.792f },
+        { 5.292f, 20.706f },
+        { 5.206f, 20.607f },
+        { 5.134f, 20.499f },
+        { 5.076f, 20.382f },
+        { 5.034f, 20.258f },
+        { 5.009f, 20.13f },
+        { 5.0f, 20.0f },
+        { 5.0f, 5.0f },
+        { 5.017f, 4.739f },
+        { 5.068f, 4.482f },
+        { 5.152f, 4.235f },
+        { 5.268f, 4.0f },
+        { 5.413f, 3.782f },
+        { 5.586f, 3.586f },
+        { 5.782f, 3.413f },
+        { 6.0f, 3.268f },
+        { 6.235f, 3.152f },
+        { 6.482f, 3.068f },
+        { 6.739f, 3.017f },
+        { 7.0f, 3.0f }
+    };
+    rcIconDrawPolyline(bounds, path0,
+                       69,
+                       viewBox, stroke, true, color);
+}
+
+static inline void rcIconBookmark(float size, RC_Color color) {
+    rcIconEmit(size, color, rcDrawIconBookmark, NULL);
+}
+
+#endif /* RC_ICON_BOOKMARK_H */

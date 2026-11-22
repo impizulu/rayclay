@@ -1,0 +1,149 @@
+# PINS - the three upstream tarballs of RayClay's Linux network profile (TOML).
+#
+# The pristine release tarballs, their licence texts (LICENSES/) and this file are DATA ONLY. RayClay's own
+# profile code (rc_net_profile.c, rc_net_profile.h, rc_net_profile_psa.h and the profile's CMakeLists.txt) is
+# first-party; RayClay ships it beside this file, in the same netprofile/ directory.
+#
+# Read by:
+#   - a checksum check: each [[pin]]'s `file` must hash to its `sha256`;
+#   - an advisory check: each feed, against `version` and the [[vex]] lines;
+#   - the profile's identity TAG, a hash of its pins and its sources taken whenever they change:
+#     the anchor lines in rc_net_profile.h and rayclay.h name it, so a profile change renames the
+#     anchor, and every program that calls rcFetch, rcWebSocket or rcUpdateCheck is rebuilt against
+#     the new archive. A build recomputes nothing: the TAG is the string the profile shipped with.
+#
+# Imported 2026-10-27. Each sha256 was checked on import against three independent sources:
+#   - the value recorded when the three releases were chosen;
+#   - the GitHub release API's asset digest for the same file (curl/curl, Mbed-TLS/mbedtls, madler/zlib);
+#   - curl and zlib: the upstream OpenPGP signature (`.asc`) verified with gpg against the fingerprint below;
+#     Mbed TLS publishes no signature: its release notes' checksum block and its `-sha256sum.txt` asset.
+
+[[pin]]
+name = "curl"
+version = "8.23.0"
+file = "curl-8.23.0.tar.xz"
+released = "2026-10-14"
+spdx = "curl"
+url = "https://curl.se/download/curl-8.23.0.tar.xz"
+size = 2990916
+sha256 = "8dadd7d2536a314f982ad05a651b713f426bf7d02cc2c76cffb9796f2218e6c5"
+signature = "gpg GOODSIG/VALIDSIG on curl-8.23.0.tar.xz.asc, key 27EDEAF22F3ABCEB50DB9A125CC908FDB71E12C2"
+feed = "curl-vuln-json"
+feed_url = "https://curl.se/docs/vuln.json"
+
+[[pin]]
+name = "mbedtls"
+version = "4.1.1"
+file = "mbedtls-4.1.1.tar.bz2"
+released = "2026-07-07"
+spdx = "Apache-2.0 OR GPL-2.0-or-later"
+url = "https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-4.1.1/mbedtls-4.1.1.tar.bz2"
+size = 7099934
+sha256 = "3359a349e23db3d5536fcee032ae7b2ecbfc08972fab643089b5cbf2a375c98c"
+signature = "no signature published; sha256 matched in 3 upstream places (release notes, sha256sum asset, asset digest)"
+includes = "TF-PSA-Crypto 1.1.1 (the tarball's tf-psa-crypto/, same dual licence; it counts as one upstream with Mbed TLS)"
+feed = "mbedtls-advisories-index"
+feed_url = "https://mbed-tls.readthedocs.io/en/latest/security-advisories/"
+# OSV coverage, measured on import: OSV's GIT queries for https://github.com/Mbed-TLS/mbedtls return 0
+# vulnerabilities for mbedtls-4.1.1 AND for mbedtls-2.28.0, 3.6.0 and 4.0.0, which have advisories. So OSV does not
+# cover Mbed TLS; the advisories index is the feed. On import every index entry from 2025-10 (the 4.x line's
+# first release) to 2026-07 was read; earlier entries predate the 4.x line. Two hold 4.1.1: both have [[vex]] lines.
+advisories_reviewed_through = "2026-07"
+# A standing duty, not a schedule: the next Mbed TLS 4.1.x patch release replaces this pin once it is published
+# and verified. Among the steps: authenticate the complete asset as on import (a checksum the release shows twice
+# is not two authorities); read its nested sources, versions and notices; update every CMake file name, hash and
+# versioned prefix and this file's lines; re-tag; rebuild clean and incremental, and check that an archive of the
+# old profile no longer links; rebuild and ship again every program that links the profile; reconcile upstream's
+# advisories with the source before naming what the update fixes. None was found at 2026-10-28T00:12Z (the GitHub
+# release list's newest: 4.2.0 and 4.1.1; releases/tag/mbedtls-4.1.2 answered 404); no substitute is fetched before.
+maintenance = "take the next verified 4.1.x patch release (CVE-2026-25832's listed fix release is 4.1.2)"
+# Upstream's notice "Future Maintenance of Mbed TLS" (mbed-tls-announce, 2026-10-08): the present maintainers
+# keep TF-PSA-Crypto but stop maintaining the TLS and X.509 libraries from April 2027, and unless new
+# maintainers have joined by then, their security fixes and releases cease. Re-read the list before 2027-04:
+# if no one maintains them then, this profile's TLS gets no security releases, and keeping it is a decision to
+# make before that date.
+
+[[pin]]
+name = "zlib"
+version = "1.3.2"
+file = "zlib-1.3.2.tar.xz"
+released = "2026-02-17"
+spdx = "Zlib"
+url = "https://github.com/madler/zlib/releases/download/v1.3.2/zlib-1.3.2.tar.xz"
+size = 1320064
+sha256 = "d7a0654783a4da529d1bb793b7ad9c3318020af77667bcae35f95d0e42a792f3"
+signature = "gpg GOODSIG/VALIDSIG on zlib-1.3.2.tar.xz.asc, key 5ED46A6721D365587791E2AA783FCD8E58BCAFBA"
+feed = "osv-git"
+feed_url = "https://api.osv.dev/v1/query"
+osv_repo = "https://github.com/madler/zlib"
+osv_version = "v1.3.2"
+# OSV answers an unknown tag with the same empty object as a clean one: an empty answer counts as clean
+# only beside this older tag's answer, which must name at least one advisory (it named six on 2026-10-27).
+osv_control_version = "v1.2.11"
+
+# VEX: every advisory whose range holds a pin, with why it does not reach the profile. An advisory that holds
+# a pin and has no line here is one this file has not yet answered. `status` and `justification` use the
+# OpenVEX vocabulary. A line here is a claim about THIS profile's build (its CMakeLists.txt: curl with HTTP/1.1
+# only, Mbed TLS as curl's TLS, zlib only for curl's content decoding); a profile change re-reads every line.
+
+[[vex]]
+pin = "zlib"
+id = "CVE-2026-85091"
+status = "not_affected"
+justification = "vulnerable_code_not_present"
+reason = """gz_vacate() is reached only through gzwrite()/gzprintf(); curl's lib/ calls only inflateInit2 and \
+inflate. The profile's ld -r is seeded by the bridge object and pulls only the zlib members curl's decoding path \
+references, so gzwrite.c's member is never in the archive (RayClay's identity test checks that the merged object \
+defines no gz_vacate and no gzwrite). OSV range: introduced 570720b0c24f, last_affected da607da739fa."""
+
+[[vex]]
+pin = "zlib"
+id = "CVE-2026-76844"
+status = "not_affected"
+justification = "vulnerable_code_not_present"
+reason = """The stale next_in pointer is left by gz_write() after a failed write(); it is reached only through \
+the gzwrite family, which the profile never links (the same seed-form ld -r as CVE-2026-85091). Found by the \
+advisory watch's first query, on 2026-10-27. OSV range: introduced \
+cacf7f1d4e3d, fixed df84af25dc19 (unreleased at import)."""
+
+[[vex]]
+pin = "mbedtls"
+id = "CVE-2026-25832"
+status = "not_affected"
+justification = "vulnerable_code_cannot_be_controlled_by_adversary"
+reason = """Advisory mbedtls-security-advisory-2026-07-tls13-hrr-unadvertised-group (LOW): a TLS 1.3 client \
+accepts a HelloRetryRequest naming a group it did not advertise, which bypasses a group policy the APPLICATION \
+configured with mbedtls_ssl_conf_groups(). The advisory names that configuration as a precondition. curl \
+8.23.0's Mbed TLS backend (lib/vtls/mbedtls.c) never calls mbedtls_ssl_conf_groups() or _conf_curves(); RayClay's \
+rc_net_curl.c sets no CURLOPT_SSL_EC_CURVES, and the bridge's CURLOPT_SSL_CTX_FUNCTION callback sets only the CA \
+chain, so the profile has no group policy to bypass. That holds for this profile's TLS configuration only: a \
+change to it re-reads this line. \
+Upstream disagrees with itself: the advisory lists 4.1.1 as affected and 4.1.2 as fixed, while the 4.1.1 \
+release notes list this fix and an upgrade to TF-PSA-Crypto 1.2.0. The pinned tarball's bytes: \
+library/ssl_tls13_client.c:406-418 already carries the advisory's basic fix (the HelloRetryRequest's group must \
+be one the ClientHello offered and supports), :436-441 rejects any other, and tf-psa-crypto/ is 1.1.1, not \
+1.2.0. Neither the notes nor that source reading is a whole-advisory fix; see the pin's `maintenance`."""
+
+[[vex]]
+pin = "mbedtls"
+id = "CVE-2025-66442"
+status = "not_affected"
+justification = "inline_mitigations_already_exist"
+reason = """Advisory mbedtls-security-advisory-2026-03-compiler-induced-constant-time-violations (LOW, every \
+version, no fixed release): a compiler can turn constant-time C into branches; the advisory's known case is \
+Clang 18's select-optimize compiling for 64-bit RISC-V. Its mitigation is TF-PSA-Crypto's assembly constant-time \
+primitives: per the advisory, 32- and 64-bit Arm and x86 are not affected where MBEDTLS_HAVE_ASM is enabled and \
+a GCC-like compiler builds them. tf-psa-crypto/utilities/constant_time_impl.h:35-48 picks the assembly from \
+those compiler, configuration and architecture macros, and each primitive's branch also depends on the \
+condition width. The profile keeps the default MBEDTLS_HAVE_ASM (tf-psa-crypto/include/psa/crypto_config.h:1728; \
+rc_net_profile_psa.h does not undefine it). RayClay's own coverage is NARROWER than that scope, a qualification \
+boundary and not a statement of where the advisory applies: built and tested for x86-64 Linux with gcc 12 to \
+15 and clang 18 to 21, and built for arm64-v8a Android with the NDK r28c's clang 19. It admits a gcc or clang \
+of any version on x86-64 Linux, and the NDK's clang 19 or later on arm64-v8a Android, by the two checks \
+below. So the profile's CMakeLists.txt \
+builds the archive only where a probe, configured with the upstreams' own arguments and compiled under the C \
+flags their translation units get, shows MBEDTLS_HAVE_ASM and the assembly branch on an admitted compiler and \
+target, and refuses at configure anywhere else; its build then stops when the merged object defines \
+mbedtls_ct_zero (compiled only without the assembly) or is for another machine. This line holds for the archives \
+those two checks pass. They read the preprocessor's branch and the objects made, not the code a compiler \
+generates or its timing."""

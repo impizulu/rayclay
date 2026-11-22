@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <!-- Responsive: match the device width and let the canvas fill it, so the
+         RayClay layout (Clay flexbox) re-flows on desktop / tablet / phone. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title>RayClay — WebAssembly gallery</title>
+    <!-- Inline data: icon. With NO rel="icon" the browser silently requests
+         /favicon.ico, which 404s and logs a console error on every page - and
+         "zero console errors on load" is a bar every page here meets. A
+         data: URI keeps the page self-contained: it fetches nothing external. -->
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3.5' fill='%237c5cff'/%3E%3Crect x='3' y='4' width='10' height='2' rx='1' fill='%2322d3ee'/%3E%3Crect x='3' y='8' width='10' height='4' rx='1' fill='%23eef2ff'/%3E%3C/svg%3E">
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden;
+                   background: #1e1e1e; font-family: system-ui, sans-serif; }
+      /* The canvas must carry no border/padding or mouse coords drift. It fills
+         the viewport; the C side reads the framebuffer size each frame and Clay
+         re-lays-out, so resizing the window/device reshapes the UI. Its height
+         is the DYNAMIC viewport's (100vh first, for a browser without dvh): a
+         phone browser's 100vh is the page with its toolbar hidden, so while the
+         toolbar shows a 100vh canvas runs on past the bottom of the screen and
+         hides its own bottom edge. An
+         on-screen keyboard changes neither, so it resizes nothing. */
+      canvas#canvas { display: block; width: 100vw; height: 100vh; height: 100dvh;
+                      border: 0; outline: none; background: #1e1e1e; }
+      /* Centered loading status, hidden once the first frame paints. */
+      #rc-status { position: fixed; inset: 0; display: flex; align-items: center;
+                   justify-content: center; color: #9aa0a6; font-size: 14px;
+                   pointer-events: none; transition: opacity .3s; }
+      /* Fatal state: a readable, persistent card (WebGL2 missing / boot error)
+         instead of a silent black canvas. */
+      #rc-status.error { color: #e6e6e6; pointer-events: auto; transition: none; }
+      #rc-status.error .rc-card { max-width: 32rem; margin: 1.5rem; padding: 1.25rem 1.5rem;
+                   background: #2b2b2b; border: 1px solid #444; border-radius: 8px;
+                   line-height: 1.5; }
+      #rc-status.error .rc-card b { color: #f28b82; }
+    </style>
+  </head>
+  <body>
+    <!-- tabindex="0": the canvas is a stop of the page's Tab order, so a Tab
+         that left the page past RayClay's last stop (to the browser's own UI)
+         can come back: Tab into the canvas focuses RayClay's first stop,
+         Shift+Tab its last. A shell of your own (--shell-file) needs the same
+         attribute. outline: none (above) leaves the ring to RayClay. -->
+    <canvas id="canvas" oncontextmenu="event.preventDefault()" tabindex="0"></canvas>
+    <div id="rc-status">Loading RayClay…</div>
+    <script>
+      var statusEl = document.getElementById('rc-status');
+      var booted   = false;
+
+      // Surface a fatal problem as a readable card rather than a blank canvas.
+      // `detail` is set as TEXT (never HTML), so a runtime error message that
+      // contains '<' or '&' renders literally instead of breaking the markup.
+      function rcFatal(title, detail) {
+        if (!statusEl) return;
+        statusEl.className = 'error';
+        var card = document.createElement('div');
+        card.className = 'rc-card';
+        var head = document.createElement('b');
+        head.textContent = title;
+        card.appendChild(head);
+        if (detail) {
+          card.appendChild(document.createElement('br'));
+          card.appendChild(document.createTextNode(detail));
+        }
+        statusEl.innerHTML = '';
+        statusEl.appendChild(card);
+        statusEl.style.opacity = '1';
+      }
+      function rcErrored() { return statusEl && statusEl.classList.contains('error'); }
+
+      // WebGL2 is required (sokol GLES3 -> WebGL2). Probe with a throwaway canvas
+      // BEFORE boot so an unsupported browser gets a clear message, not a black
+      // canvas + cryptic console errors. The probe context is separate from the
+      // app canvas, so it does not interfere with the module's own GL context.
+      function hasWebGL2() {
+        try { return !!document.createElement('canvas').getContext('webgl2'); }
+        catch (e) { return false; }
+      }
+
+      // THE BUILD ID. rc_web_example() in CMakeLists.txt rewrites this one line after
+      // the link, to "?v=" and twelve hex digits of a SHA-256 over this page's .wasm,
+      // .js and .data, and gives emcc's script tag below the same query. The files of
+      // one build are then fetched under URLs no other build uses, so a cache holding
+      // an older build cannot hand this page a mix of two builds (serve the .html
+      // itself with Cache-Control: no-cache). It stays a valid literal: a page the
+      // step did not rewrite (emcc run with this shell by hand) keeps the empty string.
+      var rcBuildQuery = "";
+
+      var Module = {
+        canvas: document.getElementById('canvas'),
+        print:    function (t) { console.log(t); },
+        printErr: function (t) { console.error(t); },
+        // The build id rides on the two files emcc fetches itself and on nothing else
+        // it may locate: the .wasm (d is the .js file's directory) and the .data (d is
+        // '', so beside the page), where emcc's own default puts them.
+        locateFile: function (p, d) {
+          return d + p + (/\.(wasm|data)$/.test(p) ? rcBuildQuery : '');
+        },
+        setStatus: function (t) { if (statusEl && !rcErrored()) statusEl.textContent = t || ''; },
+        // First run dependency drained => the module is live; fade the overlay.
+        onRuntimeInitialized: function () {
+          booted = true;
+          if (statusEl && !rcErrored()) {
+            statusEl.style.opacity = '0';
+            setTimeout(function () { if (statusEl && !rcErrored()) statusEl.remove(); }, 400);
+          }
+        }
+      };
+
+      if (!hasWebGL2()) {
+        rcFatal('WebGL2 is required.',
+                'This RayClay demo renders through WebGL2, which this browser does ' +
+                'not provide. Try a recent Chrome, Firefox, Edge, or Safari with ' +
+                'hardware acceleration enabled.');
+      }
+
+      // A crash during boot should show, not blank the page. Emscripten's wasm boot
+      // is promise-based (instantiateStreaming / async init), so a failed .wasm fetch
+      // surfaces as an unhandled rejection, NOT an 'error' event - handle both.
+      function rcBootFail(detail) {
+        if (!booted && !rcErrored())
+          rcFatal('RayClay failed to start.', detail || 'See the browser console for details.');
+      }
+      window.addEventListener('error', function (e) {
+        rcBootFail(e && e.message ? String(e.message) : '');
+      });
+      window.addEventListener('unhandledrejection', function (e) {
+        rcBootFail(e && e.reason && e.reason.message ? String(e.reason.message) : '');
+      });
+
+      // A lost WebGL context is fatal in v1.0: RayClay frees CPU-side image
+      // pixels after GPU upload and never re-runs sg_setup, so its resources
+      // cannot be rebuilt (context restore is not handled; supporting it means
+      // preventDefault() + a 'webglcontextrestored' handler). Without
+      // preventDefault() the browser's default - no restoration - matches that
+      // reality; show a persistent reload card instead of a false promise. Boot
+      // removes the status overlay from the DOM, so re-attach it first. No
+      // auto-reload: loss often recurs (driver crash loop) and reload discards
+      // app state - the user's own reload is the recovery gesture.
+      Module.canvas.addEventListener('webglcontextlost', function () {
+        if (statusEl && !statusEl.isConnected) document.body.appendChild(statusEl);
+        rcFatal('Graphics context lost.',
+                'The GPU context was lost (driver reset or resource pressure) and ' +
+                'this build cannot rebuild its graphics resources. Reload the page ' +
+                'to continue.');
+      }, false);
+
+      // On the web the BROWSER owns zoom (RayClay's own Ctrl+wheel zoom is
+      // compiled out there), but SDL3's canvas wheel listener preventDefault()s
+      // every wheel it accepts - its handler returns "handled" whenever
+      // mouse-wheel events are enabled - including Ctrl+wheel and a trackpad
+      // pinch (which arrives as a ctrlKey wheel). The runtime itself exempts
+      // that gesture on any page (Module.rcWheelWatch), so this
+      // copy is a redundant backup, kept for a runtime older than the page's
+      // shell. SDL registers its listener on the canvas in the
+      // bubble phase at runtime init, and capture listeners at the target fire
+      // before non-capture ones regardless of registration order, so this
+      // exemption is capture-phase and registered at parse time: it runs first
+      // and stopImmediatePropagation() keeps ctrl-wheels away from SDL - the
+      // browser's page zoom engages and the app never sees a zoom wheel.
+      // 'mousewheel' covers the legacy registration on engines that still
+      // deliver it.
+      function rcExemptZoomWheel(e) {
+        if (e.ctrlKey) e.stopImmediatePropagation();
+      }
+      Module.canvas.addEventListener('wheel', rcExemptZoomWheel,
+                                     { passive: true, capture: true });
+      Module.canvas.addEventListener('mousewheel', rcExemptZoomWheel,
+                                     { passive: true, capture: true });
+
+      // The keyboard half of the same rule. Ctrl (Cmd on macOS) with '=', '+',
+      // '-', '_' or '0' is the browser's page-zoom accelerator - with Shift or
+      // on the keypad too, never with Alt - and SDL3's window keydown listener
+      // preventDefault()s every keydown that carries ctrlKey. The runtime's key
+      // watch (rci_window_sdl_web_key_watch) exempts these chords on any page,
+      // so this copy is a redundant backup too. SDL registers that listener on
+      // window in the bubble phase; this one is a capture listener on window,
+      // so it runs first, and stopPropagation() keeps these chords away from
+      // SDL: the browser zooms and the app never sees them (its own zoom keys
+      // are compiled out on the web). Ctrl+Alt zooms nothing (on Windows it is
+      // AltGr), so it reaches the app like every chord outside this set.
+      function rcExemptZoomKey(e) {
+        if ((e.ctrlKey || e.metaKey) && !e.altKey &&
+            (e.key === '=' || e.key === '+' || e.key === '-' || e.key === '_' ||
+             e.key === '0'))
+          e.stopPropagation();
+      }
+      window.addEventListener('keydown', rcExemptZoomKey, true);
+
+      // The canvas fills the viewport via CSS (above). Sizing is the window
+      // host's: SDL3's emscripten port reads this CSS box at create and on every
+      // window resize, and RayClay's window host replays that resize when
+      // devicePixelRatio changes without one (the window moved to a display of
+      // another scale). The layout follows the CSS box, and the drawing buffer
+      // is CSS px x devicePixelRatio, device-pixel crisp on HiDPI and under page
+      // zoom. Keep the canvas stretched to the page even if the GL backend pins
+      // an inline size: the dynamic viewport's height, as in the stylesheet (a
+      // browser without dvh ignores that value and keeps 100vh).
+      window.addEventListener('resize', function () {
+        Module.canvas.style.width = '100vw';
+        Module.canvas.style.height = '100vh';
+        Module.canvas.style.height = '100dvh';
+      });
+    </script>
+    {{{ SCRIPT }}}
+  </body>
+</html>

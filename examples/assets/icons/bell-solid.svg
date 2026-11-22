@@ -1,0 +1,16 @@
+<!-- RayClay's own drawing (ex24_messenger): a solid bell, a dome, its clapper
+     and its knob. The chat header draws it every frame, and Lucide's stroked
+     bell flattens to a long path that costs over a hundred draw commands; this
+     is three. -->
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="currentColor"
+  stroke="none"
+>
+  <polygon points="4.5 17.5 6 16 6 11 6.2 9.45 6.8 8 7.76 6.76 9 5.8 10.45 5.2 12 5 13.55 5.2 15 5.8 16.24 6.76 17.2 8 17.8 9.45 18 11 18 16 19.5 17.5" />
+  <circle cx="12" cy="19.8" r="2" />
+  <circle cx="12" cy="3.9" r="1.3" />
+</svg>

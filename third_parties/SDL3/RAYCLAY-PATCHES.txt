@@ -1,0 +1,435 @@
+RayClay patches to the vendored SDL3
+====================================
+
+This tree is SDL 3.4.20 (REVISION.txt), vendored verbatim except for the
+entries below. Each edit site in the sources carries a comment that starts
+with the marker (the words "RayClay patch", in capitals) and names this file.
+A vendor bump re-applies every entry, rewrites RAYCLAY-UPSTREAM.sha256 (the
+release's SHA-256 of every other file) from the release archive, then checks
+every other file against it.
+
+1. The web canvas drawing buffer is sized once, from the fractional CSS size.
+   Upstream version: SDL 3.4.20 (written on 3.4.18).
+   Files and functions:
+     src/video/emscripten/SDL_emscriptenvideo.h  Emscripten_SetCanvasSize (declaration)
+     src/video/emscripten/SDL_emscriptenvideo.c  Emscripten_SetCanvasSize (new),
+                                                 Emscripten_SetWindowFillDocument,
+                                                 Emscripten_CreateWindow,
+                                                 Emscripten_SetWindowSize,
+                                                 Emscripten_GetWindowSizeInPixels
+     src/video/emscripten/SDL_emscriptenevents.c Emscripten_HandleResize
+   Reason: a canvas whose size CSS controls can be a fractional number of CSS
+   pixels (a 1080 px wide phone at a pixel ratio of 2.625 is 411.43 CSS px
+   wide), while SDL_Window stores integers. Upstream sizes the drawing buffer
+   from the integer window size at window creation and in SDL_SetWindowSize
+   (411 x 2.625 rounds to 1079) but from the fractional CSS size in the
+   browser's resize handler (411.43 x 2.625 rounds to 1080), and reports the
+   pixel size from the integer (1079). So before the first resize event a 1079
+   px buffer is stretched over 1080 device pixels, and after it the last
+   device column of the 1080 px buffer is never drawn. The patch routes every
+   path that sizes the buffer through Emscripten_SetCanvasSize, which rounds
+   the fractional CSS size exactly once (creation and SDL_SetWindowSize read
+   the CSS size back when CSS controls it, as the resize handler does), reads
+   the integer window size at creation with SDL_lround as the resize handler
+   reports it, and makes Emscripten_GetWindowSizeInPixels report the buffer
+   the canvas has (falling back to the upstream formula if the canvas cannot
+   be read). The canvas size matches what a browser computes for a canvas
+   sized by CSS: round(cssWidth x devicePixelRatio), once.
+
+2. An input method's replaceText reaches the app on Android.
+   Upstream version: SDL 3.4.20 (written on 3.4.18).
+   Files and functions:
+     android-project/app/src/main/java/org/libsdl/app/SDLInputConnection.java
+                                                 replaceText (new override),
+                                                 the TextAttribute import
+   Reason: SDLInputConnection keeps its own copy of the text an input method
+   edits, and tells the app what changed (Backspaces for what was removed,
+   then the new text) from updateText, which upstream runs after commitText
+   and setComposingText. InputConnection.replaceText (API 34) edits that copy
+   in BaseInputConnection without passing through commitText, and Gboard
+   applies a picked suggestion with it: over "Teh", picking "The" calls
+   replaceText(1, 3, "he ", 1, ...). Upstream reports nothing for it, so the
+   field keeps the old word until the next key's updateText sends the whole
+   difference. The patch overrides replaceText to call the base class and then
+   updateText, as commitText does. Below API 34 no input method calls it.
+   RayClay's Android build compiles this tree's Java and builds its native
+   library, after a check that pins the patch.
+
+3. An XDG_DATA_HOME set empty is read as unset on Unix.
+   Upstream version: SDL 3.4.20 (written on 3.4.18).
+   Files and functions:
+     src/filesystem/unix/SDL_sysfilesystem.c     SDL_SYS_GetPrefPath
+   Reason: the XDG Base Directory specification says that when $XDG_DATA_HOME
+   is either not set or empty, $HOME/.local/share is used. Upstream tests the
+   variable for NULL only, so an empty value is taken as the base directory:
+   SDL_GetPrefPath builds "/org/app/" and creates it at the filesystem root,
+   which fails for a process that may not create a directory there (the call
+   answers NULL) and succeeds for one that may, and the trailing-slash test
+   reads envr[len - 1] with len 0, the byte before the string. The patch reads
+   an empty value as unset, so the $HOME branch runs, as RayClay's own data
+   folder does (rcAppDataPath, which no longer asks SDL on a
+   POSIX desktop: SDL reads its own copy of the environment). An app that
+   calls this SDL itself still meets the patched read. An empty HOME is left
+   as upstream has it.
+
+4. The iOS status bar's style is set from a hint the host sets.
+   Upstream version: SDL 3.4.20 (written on 3.4.18).
+   Files and functions:
+     src/video/uikit/SDL_uikitviewcontroller.h   rayclayStatusBarStyle (new property)
+     src/video/uikit/SDL_uikitviewcontroller.m   SDL_RayClayStatusBarStyleHintChanged (new),
+                                                 initWithSDLWindow:, dealloc,
+                                                 preferredStatusBarStyle (new override)
+   Reason: upstream decides only whether the bar is shown (prefersStatusBarHidden:
+   hidden for a borderless or full-screen window) and never overrides
+   preferredStatusBarStyle, so the bar's icons follow the system's appearance
+   whatever the app draws under them: dark icons on a dark app bar while the
+   phone is in light mode. The Info.plist's UIStatusBarStyle does not help,
+   because the default view-controller-based appearance ignores it. RayClay's
+   RC_AppOptions.statusBar and rcSetStatusBar choose the icons. The patch adds a
+   callback for the hint RAYCLAY_IOS_STATUS_BAR_STYLE beside the home
+   indicator's: "light" answers UIStatusBarStyleLightContent, "dark"
+   UIStatusBarStyleDarkContent, anything else UIStatusBarStyleDefault (the
+   upstream behaviour), and each change asks UIKit to read the style again.
+   SDL_AddHintCallback calls it at once with the hint's current value, so a
+   hint set before SDL_CreateWindow holds from the first frame.
+   RayClay's SDL host sets the hint (rci_window_sdl_ios_status_bar_icons).
+
+5. A host responder owns the iOS text field's edit actions and floating cursor.
+   Upstream version: SDL 3.4.20 (written on 3.4.18).
+   Files and functions:
+     src/video/uikit/SDL_uikitviewcontroller.m   RAYCLAY_PROP_UIKIT_TEXT_HOST (new),
+                                                 RayClayTextHost (new protocol and
+                                                 function), RayClayTextHostFloatingCursor
+                                                 (new); SDLUITextField nextResponder (new
+                                                 override), canPerformAction:withSender:,
+                                                 beginFloatingCursorAtPoint:,
+                                                 updateFloatingCursorAtPoint:,
+                                                 endFloatingCursor (new overrides)
+   Reason: the keyboard belongs to SDL's hidden UITextField, the first
+   responder, so UIKit's edit menu actions, its "Allow Paste"-free system Paste
+   and the keyboard's trackpad (the floating cursor) all address that field's
+   64 placeholder spaces, which nobody sees; upstream also refuses paste:
+   outright. RayClay draws its own fields and needs those to reach its editor.
+   The patch is armed by one
+   SDL global property, "RAYCLAY.uikit.text_host", a UIResponder the host sets
+   (rci_window_sdl_ios_text_host); unset, every method behaves
+   as upstream, but that the field now answers to the three floating-cursor
+   selectors even where UITextField has none of its own (the overrides then do
+   nothing, on a field nobody sees). Armed: the field's nextResponder is the
+   host, so UIKit's target search walks from the field to the host; the field
+   answers NO for cut:, copy:, paste:, select: and selectAll:, so the search
+   does not stop at its own spaces; the floating cursor's begin, move and end
+   reach the host's rayclayFloatingCursorPhase:x:y: (0, 1, 2; the field's
+   points), each after UITextField's own method where UITextField has one; and
+   at the end the field's own selection is put back at the end of its text, at
+   once and again on the main queue's next turn (should UIKit place the caret
+   after the call), so SDL's text diff (textFieldTextDidChange:) keeps
+   appending. No RayClay logic is in the patch. The host is
+   RayClay's iOS text view, in rayclay.h.
+
+6. An event another thread queues while the owner waits wakes the wait.
+   Upstream version: SDL 3.4.20 (written on 3.4.18; unchanged on upstream main
+   4bb5020be2, 2026-10-30).
+   Files and functions:
+     src/events/SDL_events.c                     SDL_WaitEventTimeout_Device
+   Reason: SDL_WaitEventTimeout reads the queue, finds it empty, and only
+   then publishes the window SDL_SendWakeupEvent wakes before it blocks in the
+   video driver's WaitEventTimeout (GetMessage, nextEventMatchingMask, poll on
+   the X11 or Wayland socket). An event another thread adds between the read
+   and the publish is queued while SDL_SendWakeupEvent finds no window, so the
+   wait sleeps with it queued until the timeout or the next system event. A
+   RayClay app waits for as long as its scheduler allows, which is forever
+   when it is idle, and its wakes come from other threads (rcAppWake, an
+   rcFetch or file-dialog answer): one that lands in that gap would sit
+   unanswered until the user moved the mouse. The patch publishes the window
+   before the read and withdraws it on each return that does not wait (an
+   error, an event read, the timeout spent). An event added after the read
+   then finds the window and wakes the wait; one added before it is read. An
+   event added between the publish and a read that returns costs one spare
+   system wake message, which the next pump dispatches. Android and the
+   platforms without a WaitEventTimeout hook (UIKit, the dummy driver) never
+   reach this function. RayClay's SDL wait (rci_window_wait_events) relies
+   on it to park without a bound.
+
+7. Android's safe area leaves out the system gesture insets.
+   Upstream version: SDL 3.4.20 (written on 3.4.18).
+   Files and functions:
+     android-project/app/src/main/java/org/libsdl/app/SDLSurface.java
+                                                 onApplyWindowInsets
+   Reason: upstream reports as the window's safe area the union of five inset
+   types: systemBars, systemGestures, mandatorySystemGestures, tappableElement
+   and displayCutout. The gesture insets mark where the system takes a swipe
+   (the back gesture's edges, the home pill, the notification shade), not where
+   it draws, and Android's guidance is to draw under them and keep only drag
+   controls out. A page in Chrome on the same phone draws there too: its
+   env(safe-area-inset-*) leaves them out. On a Pixel 8a (1080 x 2400, gesture
+   navigation) the union reserved 78 px down each side in portrait, so every app
+   that pads by rcViewport().safe drew in x = 78..1002 between empty bands, and
+   153 px at the top and 84 at the bottom where the bars take 121 and 63. The
+   patch reports systemBars | displayCutout: the status bar, the navigation bar
+   (a 3-button bar at the bottom or at a side, the gesture handle), a caption
+   bar, and the camera cutout on whichever side it is. tappableElement goes
+   with the gestures: the bars it covers are system bars. The keyboard (ime)
+   reading below it is unchanged.
+
+8. A window's caption keeps the scheme the app chose on Windows.
+   Upstream version: SDL 3.4.20 (written on 3.4.18).
+   Files and functions:
+     src/core/windows/SDL_windows.c              WIN_UpdateDarkModeForHWND
+   Reason: upstream draws every window's caption in the desktop's app mode
+   (ShouldAppsUseDarkMode, written with WCA_USEDARKMODECOLORS), at creation
+   and again on every WM_SETTINGCHANGE "ImmersiveColorSet" broadcast, which
+   Windows sends when the user changes the app mode or the accent colour.
+   RayClay draws the caption in the scheme of the window's clear colour, as
+   CSS color-scheme does (DWMWA_USE_IMMERSIVE_DARK_MODE), so a light app got
+   a dark caption the moment the user turned Windows dark, and no SDL hint
+   turns the rewrite off. The patch reads the window property
+   "RayClayChromeScheme" after the desktop's answer: 1 writes light, 2 dark,
+   absent (or 0) keeps the desktop's, which is the upstream behaviour for
+   every window RayClay did not mark (SDL's tray among them).
+   RayClay's SDL host sets the property (rci_window_sdl_apply_scheme) before
+   its own DWM write; the creation-time call runs before the property can
+   exist, and that DWM write comes after it on the same thread.
+
+9. Android's JNIEnv key fails closed on a positive pthread error.
+   Upstream version: SDL 3.4.20 (written on 3.4.18).
+   Files and functions:
+     src/core/android/SDL_android.c              mThreadKeyCreated (new),
+                                                 Android_JNI_SetEnv,
+                                                 Android_JNI_GetEnv,
+                                                 Android_JNI_SetupThread,
+                                                 Android_JNI_CreateKey,
+                                                 Android_JNI_CreateKey_once
+   Reason: SDL keeps each thread's JNIEnv under one pthread key, whose
+   destructor detaches a thread SDL attached. pthread functions report an
+   error as a positive number, and upstream tests their status with `< 0`.
+   So a pthread_setspecific that refuses (bionic answers EINVAL for a key that
+   is not valid) reads as a stored env, and a pthread_key_create that fails
+   (EAGAIN once the process's keys are used up) or a failed pthread_once logs
+   nothing, after which every thread reads, writes and attaches through a key
+   that was never created: a key number another library may own, and a thread
+   attached with no destructor to detach it. The patch tests each status
+   for nonzero, and records that the key was created. The key is made once
+   per process, through pthread_once, and a failure is never retried: it
+   lasts until the process ends. Without the key, Android_JNI_SetEnv stores
+   nothing, and nothing attaches a thread: Android_JNI_GetEnv answers a
+   thread the VM already has (SDL's main thread and Android's UI thread are
+   Java threads) with the VM's own env, read through JavaVM GetEnv, and any
+   other thread with NULL and a logcat error; Android_JNI_SetupThread answers
+   false. SDL's own native threads are then refused: SDL_systhread.c ignores
+   SetupThread's answer, and SDL code that calls JNI on such a thread without
+   testing the env for NULL still faults, as it would with no VM. With the
+   key, a thread that GetEnv or SetupThread attached but could not store is
+   detached again before the call answers (no destructor would detach it,
+   and ART aborts a native thread that exits attached); a thread the VM
+   already had before the call is never detached, and GetEnv still answers
+   its env. Attaching and detaching are otherwise upstream's. A review found
+   this by reading the code against bionic; no leak or failure was observed
+   on a device.
+
+10. The dynamic API is off: RayClay links SDL statically.
+   Upstream version: SDL 3.4.20 (written on 3.4.18).
+   Files and functions:
+     src/dynapi/SDL_dynapi.h                     the closing SDL_DYNAMIC_API default (1 -> 0)
+   Reason: SDL refuses the switch from the command line with #error, so it
+   can only be made here.
+   RayClay builds SDL as a static library inside every SDL3-host app, where the
+   dynamic API buys nothing: its jump table (SDL_dynapi_procs.h, 1,270 entries)
+   names every SDL entry point, so section GC can drop none of them, and the
+   SDL3_DYNAMIC_API environment variable can load another SDL library into a
+   shipped app at run time. Measured on Fedora 44 (gcc 16.2.1, Release,
+   stripped): an SDL3-host ex00 is 3,565,864 B with it on and 3,124,728 B off
+   (-441,136 B, -12.4%). iOS, Android and the web already build with it off
+   (the branches above). Desktop SDL3 hosts (macOS, Linux, Windows) now do too.
+   Upstream's warning about updating SDL in the field does not apply: a RayClay
+   app ships its own SDL and is rebuilt to update it.
+
+11. SDL's deliberate deprecated calls compile without javac's note.
+   Upstream version: SDL 3.4.20 (written on 3.4.18). Unfixed upstream on 2026-11-08:
+   release 3.4.20 and main (280e3df7a5) print the same note (67 and 69 deprecated uses).
+   Files and functions (an annotation on each class that holds such a call):
+     android-project/app/src/main/java/org/libsdl/app/HIDDeviceBLESteamController.java
+                                                 HIDDeviceBLESteamController
+     android-project/app/src/main/java/org/libsdl/app/HIDDeviceManager.java
+                                                 HIDDeviceManager
+     android-project/app/src/main/java/org/libsdl/app/SDLActivity.java
+                                                 SDLActivity, SDLClipboardHandler
+     android-project/app/src/main/java/org/libsdl/app/SDLControllerManager.java
+                                                 SDLHapticHandler_API31,
+                                                 SDLHapticHandler_API26,
+                                                 SDLHapticHandler
+     android-project/app/src/main/java/org/libsdl/app/SDLSurface.java
+                                                 SDLSurface
+   Reason: every APK build, by
+   RayClay's Android build or by SDL's own Gradle project, printed "Note:
+   Some input files use or override a deprecated API." because these classes
+   call APIs Android has deprecated, each on a version-guarded path for the old
+   API levels SDL supports. javac cannot silence that note per file from its
+   command line (its -XDsuppressNotes is an unsupported hidden option), so the
+   patch puts @SuppressWarnings("deprecation") on the eight classes, each under
+   a marker. The annotation exists only in source: compiled without debug line
+   tables, all 49 classes are byte-identical with and without it (javac 25.0.3,
+   android-37.0, 2026-11-08). Its cost: a deprecated call added inside these
+   classes by a later patch is silent too. RayClay's own Java (RCActivity,
+   RayClayMedia) still compiles apart, with -Xlint:deprecation.
+
+12. A window style command that changes nothing does not wait for a resize.
+   Upstream version: SDL 3.4.20. Unfixed upstream on 2026-11-10: release 3.4.20,
+   the release-3.4.x branch (ee239da42b) and main (69257e31bc) wait the same way.
+   Files and functions:
+     android-project/app/src/main/java/org/libsdl/app/SDLActivity.java
+                                                 sendCommand
+   Reason: SDLActivity.sendCommand posts COMMAND_CHANGE_WINDOW_STYLE to the UI
+   thread and then waits, up to 500 ms, for SDLSurface.surfaceChanged to say the
+   surface was resized. For a command that leaves fullscreen it waits whenever
+   the surface is as large as the display. SDL sends that command for every
+   window it shows (SDL_ShowWindow, ApplyWindowFlags in SDL_video.c:
+   SDL_SetWindowFullscreen(window, false), whatever the window's flags), so a
+   window that was never fullscreen is told to leave it. An app that targets
+   API 35 on Android 15 or later is laid out edge to edge: its surface is the
+   display's size in both modes, the command resizes nothing, nothing calls
+   notifyAll, and SDL_CreateWindow sleeps the whole 500 ms on SDL's thread with
+   Android_ActivityMutex held. Measured on a Pixel 8a (Android 17): SDL's thread
+   used no CPU for 501.0 to 503.6 ms of every start, 70% of a 716 ms cold start
+   of the smallest example. The patch reads SDLActivity.mFullscreenModeActive,
+   the mode SDL's own handler recorded, before the message is posted (after it,
+   the handler may already have set it), and skips the wait when the command
+   asks for that mode: a style that does not change resizes no surface. The
+   message is posted as before, so the window is told what upstream tells it. A
+   command that changes the mode waits as upstream does. The read is the mode in
+   force when the command is sent: a command sent while an earlier one that
+   changes the mode is still queued compares with the older mode, and waits or
+   not by it. RayClay never asks SDL for fullscreen on Android, and its own
+   code sends no style command: the one at window creation is SDL's.
+
+13. An indexed source the lean blit chain leaves takes SDL's generic blit.
+   Upstream version: SDL 3.4.20. Unfixed upstream on 2026-11-13: release 3.4.20,
+   the release-3.4.x branch (eac186a84c) and main (fff6448f52) choose the same way.
+   Files and functions:
+     src/video/SDL_blit.c                        SDL_CalculateBlit
+   Reason: RayClay builds SDL with SDL_LEAN_AND_MEAN, SDL_HAVE_BLIT_N=1 and
+   SDL_DISABLE_STB (the root CMakeLists.txt's SDL3 block), so the window host's
+   one conversion, an RGBA32 icon or cursor to ARGB8888, keeps SDL_blit_N.c's
+   code and speed while the other blitters are left out. SDL_CalculateBlit
+   chooses through an else-if chain in which SDL_HAVE_BLIT_0 and SDL_HAVE_BLIT_1
+   take every indexed source and SDL_HAVE_BLIT_N's last branch takes whatever
+   is left. With the first two left out, an indexed source reached
+   SDL_CalculateBlitN, which reads a pixel as packed RGB: an INDEX8 image (an
+   8-bit BMP from SDL_LoadBMP) converted to ARGB8888 came out black with no
+   error, and a 1, 2 or 4-bit one was read past the end of its pixels
+   (AddressSanitizer, 2026-11-13: a heap-buffer-overflow read in BlitNtoN
+   while converting a 256 x 4 INDEX4MSB surface). The patch lets that branch
+   take a source that is not indexed, so an indexed one goes on to
+   SDL_Blit_Slow, as it does when SDL_HAVE_BLIT_N is left out as well: an INDEX8
+   source converts through its palette, a color key included, and a 1, 2 or
+   4-bit source is refused ("Blit combination not supported"). With every
+   blitter built, as upstream builds by default, the first two branches take
+   every indexed source first and the patch changes nothing. RayClay's own
+   surfaces are RGBA32 and never reach it; an app that calls the vendored SDL
+   itself can.
+
+14. SDLActivity acquires its HID device manager only where SDL has HIDAPI.
+   Upstream version: SDL 3.4.20. Fixed upstream on main by 2919e1899f (2026-07-02,
+   "Android: decouple JNI setup from unused subsystems"), which no release holds on
+   2026-11-15 (3.4.20, the latest, acquires it on every start). This entry is that
+   commit's HIDAPI gate alone, by upstream's own name and rule; a bump to a release
+   that holds the commit drops it.
+   Files and functions:
+     android-project/app/src/main/java/org/libsdl/app/SDLActivity.java
+                                                 onCreate, nativeIsHIDAPIEnabled (new)
+     src/core/android/SDL_android.c              nativeIsHIDAPIEnabled (new),
+                                                 SDLActivity_tab
+   Reason: SDLActivity.onCreate acquires HIDDeviceManager, the Java half of SDL's
+   USB and Bluetooth HID joysticks, on every start: its constructor opens the app's
+   "hidapi" SharedPreferences (a file in the app's data), asks the package manager
+   whether the device is a Chromebook and registers a callback with the native side.
+   RayClay builds SDL with HIDAPI off (the root CMakeLists.txt's SDL3 block), where
+   hid.cpp's natives are stubs, so all of it is work nothing reads: 2.4 ms of every
+   cold start between the activity's creation and its first frame on a Pixel 8a
+   (Android 17, a release-shaped APK, n=33 launches). The patch asks the native side
+   whether HIDAPI is compiled in (SDL_HIDAPI_DISABLED, upstream's test) and acquires
+   the manager only then. Every use of mHIDDeviceManager already allows null; with
+   HIDAPI built, as upstream builds by default, the patch changes nothing.
+
+15. An activity may start SDL's thread before its window has a surface.
+   Upstream version: SDL 3.4.20. Not upstream on 2026-11-15: release 3.4.20 and
+   main start the thread in handleNativeState once the surface is ready, and
+   Android_CreateWindow fails without one.
+   Files and functions:
+     android-project/app/src/main/java/org/libsdl/app/SDLActivity.java
+                                                 startSDLThreadEarly (new),
+                                                 mSDLThreadEarly (new), initialize,
+                                                 handleNativeState
+     src/video/android/SDL_androidwindow.c       Android_CreateWindow
+     src/video/android/SDL_androidevents.c       android_egl_context_restore
+     src/core/android/SDL_android.c              Android_PauseResumeTaken (new),
+                                                 Android_SendLifecycleEvent,
+                                                 Android_WaitLifecycleEvent,
+                                                 onNativeSurfaceCreated
+   Reason: SDL runs the app's main (and so all of RayClay's start: the GL
+   context, the renderer's shaders, compiled cold after an install or a cleared
+   cache, the fonts, the first layout) only once the activity's surface exists,
+   about 30 ms after its creation on a Pixel 8a (Android 17), and that work then
+   stands between the surface and the first frame. startSDLThreadEarly, which
+   RCActivity calls from onPostCreate, starts the thread at once and tells SDL the
+   display's size, which stands for the surface's until surfaceChanged reports
+   it. Android_CreateWindow then makes a GL window with no surface where the EGL
+   display has EGL_KHR_surfaceless_context (its context is current with none:
+   gl_allow_no_surface), and otherwise waits for the surface, pumping the
+   lifecycle as a paused window does. SDL's own handlers already take a window
+   without a surface (onNativeSurfaceCreated fetches the native window,
+   onNativeSurfaceChanged makes the EGL surface); the first resume, which
+   handleNativeState sends to a running thread once the surface is ready, turns
+   on the sensor a thread started there would, and android_egl_context_restore
+   makes the context current on the new surface: a context never backed up (no
+   pause yet) is the current one, and the swap interval the app set is kept,
+   not reset to the 0 of an empty backup. Measured on a Pixel 8a, Android 17, a
+   release-shaped APK of an empty window, 11 interleaved cold starts (`am start
+   -W` after `pm clear`): TotalTime 146 -> 125 ms, paired -23 (11 of 11 faster),
+   SDL's main starting at 81 ms instead of 105 and the UI thread's surface at
+   103 to 104 ms either way. A subclass that does not call it starts as upstream
+   does, but for one case below.
+   The lifecycle queue: upstream drops a pause and a resume queued together, as
+   each undoes the state the other left (its thread starts resumed, so its first
+   lifecycle event is a pause). A thread started early is neither paused nor on
+   the surface until it takes its first pause or resume, so before that the two
+   replace each other instead (Android_PauseResumeTaken, set when the thread
+   takes one): a pause sent while the first resume still waits (HOME during the
+   start) reaches the thread, which backs its context up and blocks, where the
+   pair's drop left it running in the background with no
+   DID_ENTER_BACKGROUND; and a resume sent while a pause from before the
+   surface still waits reaches it, where the drop left its window with no
+   surface. A thread started the upstream way that has both queued before its
+   first pump takes the resume, a foreground with no background before it.
+   The native window: Android_CreateWindow and onNativeSurfaceCreated each
+   fetch it (ANativeWindow_fromSurface, which acquires it), and a window made
+   early can fetch the surface's in the moment between the surface's creation
+   and the UI thread's surfaceCreated. Upstream's onNativeSurfaceCreated runs
+   only before a window exists or after onNativeSurfaceDestroyed released its
+   reference, so it overwrites the field; after such an early fetch that lost
+   one reference for the life of the process. It now releases the reference
+   the window holds before it fetches its own, so the window holds one
+   whichever fetch came first (an EGL surface made on it holds its own).
+
+16. A Wayland window decorated by libdecor reports its frame.
+   Upstream version: SDL 3.4.20. Unfixed upstream on 2026-11-16: main has no
+   Wayland GetWindowBordersSize (libdecor_frame_translate_coordinate is used
+   for popups only).
+   Files and functions:
+     src/video/wayland/SDL_waylandwindow.c  Wayland_GetWindowBordersSize (new)
+     src/video/wayland/SDL_waylandwindow.h  its declaration
+     src/video/wayland/SDL_waylandvideo.c   Wayland_CreateDevice (registered)
+   Reason: SDL_GetWindowBordersSize was unsupported on Wayland, so RayClay's
+   fit of a window opened larger than the output could not
+   count the title bar libdecor draws inside the window geometry: on mutter
+   50 at 1600 x 1000 the window came up 1600 x 1000 with a 37 px bar (1037
+   tall), drew two frames so, and the compositor then took it back to
+   1600 x 963. libdecor knows the bar once the frame has met its first
+   configure, which SDL_ShowWindow waits for: the content's offset in the
+   frame (libdecor_frame_translate_coordinate, already loaded by SDL) is the
+   top and left edge; libdecor names no right or bottom one, and its gtk and
+   cairo plugins draw none inside the geometry. Before the show, without
+   libdecor, or for a frame of server-side decorations it stays unsupported
+   (zero), as before. Measured 2026-11-16 on a private headless mutter 50.6,
+   libdecor 0.2.5 (gtk plugin): see rci_window_sdl_fit_shown in rayclay.h.
+   Upstreamable as it stands.

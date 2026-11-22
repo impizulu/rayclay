@@ -1,24 +1,13 @@
-# The very first command this repository documents is `cmake -B build`, which
-# leaves an untracked build/ behind. Without this file `git status` reports a
-# dirty tree the moment a reader follows the README, which reads as "I have
-# broken something" on a repository they have just cloned.
 /build/
 /build-*/
+/cmake-build-*/
 /out/
-
 /CMakeCache.txt
 /CMakeFiles/
 /_deps/
-
-# Configure-time downloads. The examples branch fetches nothing, but a reader
-# who adds FetchContent to try something gets this for free.
-/cmake-build-*/
-
+/compile_commands.json
+/.vscode/
+/.idea/
 .DS_Store
 CMakeUserPresets.json
 *.user
-
-# Editor state belongs to the reader, not to the project.
-/.vscode/
-/.idea/
-/compile_commands.json

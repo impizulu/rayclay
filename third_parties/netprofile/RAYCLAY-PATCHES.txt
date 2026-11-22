@@ -1,0 +1,67 @@
+RayClay patches to the network profile's curl
+=============================================
+
+The tarballs in this directory stay pristine: PINS holds each one's sha256. The
+profile's build applies the patches below to curl 8.23.0's extracted sources at
+ExternalProject's patch step, from the script-mode branch at the top of the
+profile's own CMakeLists.txt, which holds each patch's text. Each
+patch is a literal replacement that must match exactly once in the file as the
+tarball has it, or the build stops; each patched site carries a comment that
+starts "RayClay patch N". That CMakeLists.txt is one of the inputs of the
+profile's TAG (rc_net_profile.h), so a patch edit renames the profile's anchor,
+and no archive built before it links.
+
+A curl bump reads upstream's version of each site below: a patch upstream has
+released is dropped here, every other one is re-applied as its reason says.
+Each reason says what goes wrong without its patch.
+
+1. An idle connection with input pending is never reused.
+   Files and functions:
+     lib/conncache.c          Curl_cpool_conn_seems_healthy
+   Upstream: ef6b17cf12d4 "conncache: poll an idle connection for pending
+   input on every reuse" (2026-10-15, after 8.23.0; generalized by
+   774d3bff3851), in no release at 2026-11-15 (the newest tag: curl-8_23_0).
+   Taken verbatim.
+   Reason: 8.23.0 skips the health check of a pooled connection checked less
+   than a second ago, and with it the check for bytes the server sent with no
+   request outstanding. A server that sent bytes past the end of a keep-alive
+   response (a 204 with a body) then poisoned the next request on that
+   connection, which read "the reply is not HTTP" (96 of 200 back-to-back
+   requests). Chrome never reuses an idle connection with input pending.
+
+2. A request whose reused connection ends before any reply byte: a GET or a
+   HEAD is sent once more, on a new connection; any other method never again.
+   Files and functions:
+     lib/transfer.c           Curl_retry_request
+     lib/url.c                url_find_or_create_conn (the reuse test)
+   Upstream: none. curl 8.23.0 and its master (fdc6688e96, 2026-11-15) resend
+   any method up to CONN_MAX_RETRIES (5) more times, each time on any pooled
+   connection; master's never_retry bit (a75e50419b46) has no option that sets
+   it.
+   Reason: one POST reached a server 2, 4 and 6 times with 1, 3 and 6 idle
+   pooled connections that each closed after reading it. The
+   server may have acted on a request it read, so RayClay's rule, on
+   every backend, delivers a method other than GET or HEAD at most
+   once and fails it NETWORK; a GET or a HEAD, which HTTP makes safe to
+   repeat, goes once more, on a new connection, the case a resend is for (a
+   server that closed an idle connection as the request went out). curl
+   resends only a request whose connection was reused, so a resend on a new
+   connection is never resent again: CONN_MAX_RETRIES stays curl's own, which
+   it never reaches. Chrome 156 resends every method on each pooled
+   connection, then on a new one.
+
+3. A TLS handshake the transport ended fails as the transport, not as TLS.
+   Files and functions:
+     lib/vtls/mbedtls.c       struct mbed_ssl_backend_data,
+                              mbedtls_bio_cf_write, mbedtls_bio_cf_read,
+                              mbed_connect_step2
+   Upstream: none for the handshake. Master (fdc6688e96) records the BIO's
+   last result (last_io_result) for reads and writes after the handshake
+   only; the handshake still returns CURLE_SSL_CONNECT_ERROR for every
+   failure. This patch takes master's field and reads it in the handshake.
+   Reason: a reset or a clean close in the middle of the handshake read
+   SECURITY "the TLS handshake failed" for a request and a wss socket alike,
+   where the same reset or close after the handshake reads NETWORK, and
+   Chrome 156 reads ERR_CONNECTION_RESET and ERR_CONNECTION_CLOSED. The
+   handshake's own failures (an alert, a reply that is not TLS, a
+   certificate) keep CURLE_SSL_CONNECT_ERROR and read SECURITY.

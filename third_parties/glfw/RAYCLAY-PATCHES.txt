@@ -1,0 +1,703 @@
+RayClay patches to the vendored GLFW
+====================================
+
+This tree is GLFW 3.5.1 (include/GLFW/glfw3.h, GLFW_VERSION_*), vendored with
+the entries below applied. Each edit site in the sources carries a comment
+that starts with the marker (the words "RayClay patch", in capitals) followed
+by " - " and the entry's family name as its Marker line gives it; a block
+closes with "end RAYCLAY PATCH". A vendor bump re-applies every entry, then
+holds the markers in the tree and the entries here to the same set.
+
+1. A drag from outside the application is reported while it is over a window.
+   Marker: RAYCLAY PATCH - drag-over
+   Upstream version: GLFW 3.5.1.
+   Files and functions:
+     include/GLFW/glfw3.h     GLFWdragfun, glfwSetDragCallback (new)
+     src/internal.h           _GLFWwindow.dragOver, callbacks.drag,
+                              _glfwInputDrag (declaration)
+     src/input.c              _glfwInputDrag (new), glfwSetDragCallback (new)
+     src/cocoa_window.m       GLFWContentView.dragOperation, initWithGlfwWindow:
+                              (the dragged types), draggingEntered:,
+                              draggingUpdated: / draggingExited: /
+                              draggingEnded: / wantsPeriodicDraggingUpdates
+                              (new), performDragOperation:
+     src/x11_platform.h       _GLFWlibraryX11.XdndLeave
+     src/x11_init.c           initExtensions (the XdndLeave atom)
+     src/x11_window.c         processEvent (XdndPosition, XdndDrop, XdndLeave)
+     src/wl_platform.h        _GLFWlibraryWayland.dragFeedback, dragX, dragY
+     src/wl_window.c          dataDeviceHandleEnter, dataDeviceHandleLeave,
+                              dataDeviceHandleMotion, dataDeviceHandleDrop,
+                              _glfwDestroyWindowWayland
+   Reason: GLFW reports a drop and nothing before it, so a drop zone cannot
+   light up, scroll or refuse while the drag is still over the window, as a
+   browser's dragover lets a page do. The patch adds a drag callback: each
+   point of a drag over the window arrives with `over` set, in the cursor
+   callback's space, and its end once (left, dropped or cancelled), before
+   the drop callback when it is dropped. X11 and Wayland report every drag
+   over the window, files or not; macOS every drag of files, links or text;
+   Win32 reports none. GLFW still accepts and drops only files. The window
+   seam hands it on as the `drag` input callback, which RayClay's input
+   layer publishes as rci_input_drag. In no released GLFW.
+
+2. nobar's title bar can start an interactive move or resize on Wayland.
+   Marker: RAYCLAY PATCH - nobar Wayland interactive move/resize
+   Upstream version: GLFW 3.5.1.
+   Files and functions:
+     src/wl_window.c          glfwWaylandStartWindowMove (new),
+                              glfwWaylandStartWindowResize (new)
+   Reason: GLFW uses xdg_toplevel's interactive move and resize for its own
+   fallback decorations and exports neither. nobar draws RayClay's title bar
+   itself and has no wl_seat or input serial of its own, so it delegates a
+   drag of the bar and an edge resize to these two entry points, which pass
+   the seat and the last input serial GLFW holds; `edge` is an xdg_toplevel
+   resize edge. nobar's GLFW glue, inside rayclay.h, declares
+   them and compiles their use only where the root CMakeLists.txt marks the
+   GLFW it links as this patched tree (RC_GLFW_IS_VENDORED_PATCHED).
+
+3. A quit Apple event ends an application parked in glfwWaitEvents.
+   Marker: RAYCLAY PATCH - quit
+   Upstream version: GLFW 3.5.1.
+   Files and functions:
+     src/cocoa_init.m         applicationShouldTerminate: (GLFWApplicationDelegate)
+   Reason: a quit that arrives as an Apple event - Dock > Quit, a terminate:
+   sent by another process, logout - is handled by AppKit inside the very
+   nextEventMatchingMask: call a glfwWaitEvents park sleeps in. The delegate
+   marks every window shouldClose and returns NSTerminateCancel, no NSEvent
+   is dequeued, and the wait goes back to sleep; an application that polls
+   glfwWindowShouldClose after each wait never comes round to read it until
+   something else wakes it (a click, a timer), so Cmd+Q, a key event, quits
+   at once and Dock > Quit does not. The patch posts GLFW's own empty event
+   (_glfwPostEmptyEventCocoa) after the close requests, so the wait returns
+   and the next poll sees them. Upstreamable as it stands.
+
+4. A button event on macOS is read where it was made.
+   Marker: RAYCLAY PATCH - button point
+   Upstream version: GLFW 3.5.1.
+   Files and functions:
+     src/cocoa_window.m       inputButtonPoint (new); mouseDown:, mouseUp:,
+                              rightMouseDown:, rightMouseUp:,
+                              otherMouseDown:, otherMouseUp: (GLFWContentView)
+   Reason: Cocoa's button handlers pass no point, and the window gets moves
+   only while it is key (NSTrackingActiveInKeyWindow) and none for a warp. A
+   press with no move before it (the first click on a window that is not key,
+   or one synthesized at a new point) was recorded where the pointer
+   was last seen, and a drag before the next frame hit-tested it there. Each
+   handler now reports the event's own location to the cursor callback before
+   the click, as SDL's button event and a browser's mousedown carry theirs. It
+   does not go through _glfwInputCursorPos, which drops a point equal to the
+   last one it reported: the pointer can leave that point unreported and come
+   back, so a press made there went unreported, and an application that had
+   polled the pointer elsewhere in between (glfwGetCursorPos) placed the press
+   at that poll. A disabled cursor reports deltas and is left alone. A press,
+   release and press in one frame gap with the button held at the poll (a
+   double click inside one gap) asks for one more frame, at the same point.
+   Upstreamable as a new input.c entry that reports a point without the
+   dedupe: reporting an unchanged point on each button event is a behavior
+   change upstream would have to accept (glfw3.h documents the cursor position
+   callback as called when the cursor moves).
+
+5. The XDND replies on X11 carry no stack bytes.
+   Marker: RAYCLAY PATCH - zeroed XDND replies
+   Upstream version: GLFW 3.5.1.
+   Files and functions:
+     src/x11_window.c         processEvent (the XdndStatus reply at
+                              XdndPosition, the XdndFinished replies at
+                              XdndDrop and SelectionNotify)
+   Reason: each reply was built as `XEvent reply = { ClientMessage };`, which
+   initialises the union's first member, the type, and from GCC 15 nothing
+   else: GCC 15 no longer clears the rest of a union an automatic brace
+   initializer leaves (-fzero-init-padding-bits=unions restores the old
+   behaviour). The data words a reply does not set went to the drag's source
+   as whatever the stack held, so an XdndStatus refusing a drag of text,
+   which sets neither its accept bit nor its action, read as an accept when
+   that stack byte had bit 0 set: an X11 drag-over refusal read as accepted
+   in a gcc 15.3.1 Release build with RC_SIZE_OPT and LTO once an unrelated
+   change to RayClay moved what the stack held (the refusal's accept word
+   measured 0x21). The three replies now start zeroed. sendEventToWM and
+   handleSelectionRequest keep the idiom: they set every field Xlib puts on
+   the wire. Upstreamable as it stands.
+
+6. glfwInit loads no built-in gamepad mappings.
+   Marker: RAYCLAY PATCH - no built-in gamepad mappings
+   Upstream version: GLFW 3.5.1.
+   Files and functions:
+     src/input.c              the include of mappings.h (removed),
+                              _glfwInitGamepadMappings (now empty)
+   Reason: RayClay reads no joystick or gamepad, and has no API for one, but
+   glfwInit parsed all 395 of mappings.h's records into a heap table at every
+   start: the 107,478 B of mapping strings in .rodata (8.8 % of a Release
+   binary, measured 2026-09-14) and the parsed table on the heap, for a
+   lookup nothing makes. The table now starts empty; glfwUpdateGamepadMappings
+   still parses mappings an embedder hands it, and joysticks still initialize
+   on first use only. mappings.h and mappings.h.in stay in the tree unchanged,
+   so a GLFW bump diffs as before; src/CMakeLists.txt's update_mappings target
+   still regenerates the header.
+
+7. A key's name on Wayland is NULL, not a crash, on a seat with no keyboard.
+   Marker: RAYCLAY PATCH - keyless seat
+   Upstream version: GLFW 3.5.1 (upstream's master has no check either, read
+   2026-11-08).
+   Files and functions:
+     src/wl_window.c          _glfwGetScancodeNameWayland
+   Reason: the xkb state and keymap are made when a wl_keyboard's keymap
+   arrives, so on a seat that advertises no keyboard (a kiosk, a touch device,
+   a headless or VNC compositor, CI) both stay NULL, while the scancode table
+   is built at init regardless. glfwGetKeyName then reached
+   xkb_state_key_get_layout(NULL, ...) and the process died (SIGSEGV): ex06
+   resolves its labeled letter keys on its first frame, and segfaulted within
+   0.3 s on a keyboardless headless mutter, on NVIDIA and on Mesa (found
+   2026-11-08). The name is now NULL until a keymap exists, as
+   GLFW documents for a key with no name.
+
+8. Every X11 wait for another client's reply ends.
+   Marker: RAYCLAY PATCH - bounded X11 waits
+   Upstream version: GLFW 3.5.1 (upstream's master 92dcf4ce has the same
+   waits, read 2026-11-12, and still waits on any SelectionNotify, read
+   2026-11-13; glfw/glfw#2919 and #2888 are open, and the open pull request
+   #2888 bounds the waits with a deadline but still spins on XPending until
+   it passes).
+   Files and functions:
+     src/x11_window.c         waitForX11Event, getSelectionString,
+                              _glfwPushSelectionToManagerX11,
+                              isSelectionTimeNotify, getSelectionTime,
+                              isSelectionReplyTo (new)
+     src/x11_platform.h       _GLFWlibraryX11 selectionProperties,
+                              selectionNext, GLFW_SELECTION_TIME (new)
+     src/x11_init.c           initExtensions (their atoms)
+   Reason: waitForX11Event returned the moment any event was queued, and its
+   callers each look for one reply (VisibilityNotify after a map, the
+   frame-extents reply, SelectionNotify, an INCR chunk), so with any other
+   event left in the queue the timeout never ran down, and the selection
+   waits had none at all. A window manager that never maps the window (a
+   desktop with no output, upstream #2919) held glfwCreateWindow at full CPU
+   forever; a selection owner that has stopped answering (#2888) froze a
+   paste forever; a stopped clipboard manager kept glfwTerminate from
+   returning, so the application could not exit. The wait is now for new
+   data on the connection, which every caller's XCheck*Event has just read
+   to the end, and bounded: a paste gives up after 0.5 s without an answer
+   (each INCR chunk gets 0.5 s), the hand-over to the clipboard manager
+   after 0.5 s without a request from it; each failure is a
+   GLFW_PLATFORM_ERROR. Reproduced on Xvfb on 2026-11-12 by calling each of
+   the three waits: all three hung. A read that gives up
+   leaves its request with the owner, which
+   may still answer it, during a later read; one property for every request
+   let that late answer pass for the later read's: the earlier read's text
+   was pasted, or its refusal ended the later read with nothing. Each
+   request now names its own property, four taken in turn, and the server
+   time it was made at (a zero-length append to GLFW_SELECTION_TIME reports
+   it), which the owner copies into its answer (ICCCM 2.2); only the answer
+   naming the property, or a refusal naming the time, is taken, and any
+   other is dropped. Reproduced on Xvfb on 2026-11-13 with the same calls
+   and an owner that answers, or refuses, the first request late, as the
+   next one asks. The
+   cost: an owner that breaks ICCCM 2.2 and dates its refusal CurrentTime
+   instead of copying the request's time has the refusal dropped as another
+   request's, so the read waits its 0.5 s and ends with nothing where it
+   used to ask for the next target (STRING). The owners vendored here, GLFW's
+   handleSelectionRequest and SDL3's X11 one, copy the time. Taking such a
+   refusal too would let a late one from such an owner end a later read's
+   target, the defect above.
+   Upstreamable as it stands.
+
+9. The X11 work area of a monitor just switched off is empty, not a crash.
+   Marker: RAYCLAY PATCH - monitor off
+   Upstream version: GLFW 3.5.1 (upstream's master 92dcf4ce reads the mode
+   unchecked too, read 2026-11-12; glfw/glfw#2883, an open pull request,
+   adds the same check).
+   Files and functions:
+     src/x11_monitor.c        _glfwGetMonitorWorkareaX11
+   Reason: a monitor turned off stays in GLFW's list until its RandR event
+   is read, and its CRTC then has no mode, so getModeInfo answered NULL and
+   the work area read its width through it (SIGSEGV). RayClay reads the work
+   area to place every window it opens. It now answers no area and raises
+   GLFW_PLATFORM_ERROR, as _glfwGetVideoModeX11 answers no mode for the same
+   CRTC. Reproduced on Xvfb on 2026-11-12 by switching the CRTC off from
+   a second connection. Upstreamable as it stands.
+
+10. A Wayland keymap does not leak the previous one's compose state.
+   Marker: RAYCLAY PATCH - keymap compose state
+   Upstream version: GLFW 3.5.1 (upstream's master 92dcf4ce assigns over the
+   previous state too, read 2026-11-12).
+   Files and functions:
+     src/wl_window.c          keyboardHandleKeymap
+   Reason: every keymap the compositor sends (a keyboard plugged in again, a
+   layout change) builds a compose state from the locale's compose table,
+   and the previous state, with the table it holds, was dropped unfreed:
+   about 146 KB a keymap for en_US.UTF-8. Measured on a private headless
+   mutter 50.6 on 2026-11-12, its RemoteDesktop session plugging a virtual
+   keyboard in and out four times: LeakSanitizer counted 439,585 B leaked
+   through keyboardHandleKeymap; with the previous state released, none.
+   An application running for months on a laptop docked and undocked must
+   not grow. Upstreamable as it stands.
+
+11. A Wayland window is focused while the compositor activates it.
+   Marker: RAYCLAY PATCH - focus follows activation
+   Upstream version: GLFW 3.5.1 (upstream's master 92dcf4ce reports focus
+   from wl_keyboard enter and leave only, read 2026-11-12).
+   Files and functions:
+     src/wl_window.c          xdgSurfaceHandleConfigure, handleConfigure
+                              (libdecor), keyboardHandleEnter,
+                              keyboardHandleLeave, _glfwWindowFocusedWayland,
+                              _glfwHideWindowWayland
+   Reason: GLFW reported a window focused only while a wl_keyboard was in
+   it, so on a seat with no keyboard (a touch kiosk, a tablet with its
+   keyboard detached) a window was never focused, and unplugging the last
+   keyboard unfocused the active window: RayClay hid the text caret as if
+   the window were in the background, and rcWindowIsFocused, documented as
+   the window manager's active window, read false. GTK and Chromium read a
+   Wayland window's activation from xdg_toplevel's activated state, and so
+   does this now; the keyboard still decides where keys go, its leave from
+   a window that stays activated releases the keys held in it, and a
+   compositor that never sends the activated state keeps the old rule.
+   Measured on a private headless mutter 50.6 with no keyboard, its
+   RemoteDesktop session plugging one in and out (2026-11-12): RayClay's
+   window read unfocused until the keyboard came and again when it left; now
+   focused throughout, keys still delivered. A hidden window (glfwHideWindow)
+   is no longer activated: its toplevel is destroyed and no configure follows,
+   so the hide clears the state and reports the focus lost (a keyboard still
+   in it reports it at its leave). RayClay never hides a window; the clear is
+   for the patch to stand upstream.
+
+12. A Wayland seat losing its pointer ends the hover, not the process.
+   Marker: RAYCLAY PATCH - pointer unplug
+   Upstream version: GLFW 3.5.1 (upstream's master 92dcf4ce releases the
+   wl_pointer and nothing else, read 2026-11-12; glfw/glfw#2902 is open and
+   its pull request #2914 does the same as this).
+   Files and functions:
+     src/wl_window.c          seatHandleCapabilities
+   Reason: the compositor sends no wl_pointer.leave before it drops the
+   pointer capability (the last mouse unplugged, a Bluetooth mouse asleep),
+   and GLFW released the wl_pointer but kept the cursor timer, the pointer
+   surface and a half-read pointer frame. The cursor timer fires for every
+   created cursor whose theme gives its image a delay, which on Fedora's
+   stock Adwaita is every standard cursor (one image, 50 ms), so the next
+   tick called wl_pointer_set_cursor on NULL: SIGSEGV. RayClay shows the
+   hand and I-beam over its controls, so pointing at a button and losing the
+   mouse killed the app. The capability loss now disarms the timer, leaves
+   the hovered window (the cursor-leave callback fires) and drops the
+   pending pointer frame. Reproduced on a private headless
+   mutter 50.6 whose RemoteDesktop session unplugged its virtual pointer
+   over a window showing GLFW_POINTING_HAND_CURSOR, with the stock theme and
+   with an animated one (2026-11-12).
+
+13. A cursor with one image arms no timer on Wayland.
+   Marker: RAYCLAY PATCH - static cursor timer
+   Upstream version: GLFW 3.5.1 (upstream's master 92dcf4ce arms it for
+   every theme image, read 2026-11-12).
+   Files and functions:
+     src/wl_window.c          setCursorImage
+   Reason: setCursorImage armed the cursor timer with the image's delay
+   whatever the cursor, and a theme stores a delay on every image: Fedora's
+   stock Adwaita gives each standard cursor one image with 50 ms. So while
+   the pointer rested on a RayClay control showing the hand or I-beam, GLFW
+   woke 20 times a second to set the same image again (a wl_pointer
+   request and a cursor-surface commit each), the wake an idle app must not
+   make. Measured 2026-11-12 on a private headless mutter 50.6, the
+   pointer still over the hand cursor for 7 s: 127 arming timerfd_settime
+   calls; now 0. An animated cursor (more than one image) still steps.
+
+14. The items the OS asks the application to open reach a callback on macOS.
+   Marker: RAYCLAY PATCH - open files
+   Upstream version: GLFW 3.5.1 (upstream's master has no such callback,
+   read 2026-11-12 at 92dcf4ce74; its issue 1024 asks for one, open).
+   Files and functions:
+     include/GLFW/glfw3.h     GLFWopenfun, glfwSetOpenCallback (new)
+     src/internal.h           _glfwInputOpen (declaration)
+     src/init.c               _glfwOpenCallback, _glfwInputOpen (new),
+                              glfwSetOpenCallback (new)
+     src/cocoa_init.m         application:openURLs: (GLFWApplicationDelegate,
+                              new)
+   Reason: macOS hands the files of Finder's Open With and of a drop on the
+   Dock icon to the application delegate (an 'odoc' Apple event), at launch
+   and while it runs, and a URL of a scheme the bundle declares the same way.
+   GLFW's delegate implemented none of it, so AppKit fell back to its document
+   controller, which an application with no document classes answers with a
+   modal error alert (measured 2026-11-13: a level-8 window, and the app's loop
+   held until it was killed), and the items never reached the application. The delegate now
+   passes them to a callback, a file as its path and any other URL whole, as
+   SDL's delegate does. The callback is a process-wide setter kept outside
+   _glfw, like the error callback, because the items that launched the
+   application arrive inside glfwInit (_glfwInitCocoa runs [NSApp run] until
+   applicationDidFinishLaunching:), so it is set before glfwInit and no GLFW
+   function is called from it there. The window seam posts them to the
+   queue RC_FILE_DIALOG_OPENED_BY_OS reads.
+   Upstreamable as a new callback; other platforms never call it, because
+   their OS starts a new process with the paths in its arguments.
+
+15. A Wayland seat losing its keyboard ends the keyboard focus, not later.
+   Marker: RAYCLAY PATCH - keyboard unplug
+   Upstream version: GLFW 3.5.1 (upstream's master 92dcf4ce releases the
+   wl_keyboard and nothing else, read 2026-11-13).
+   Files and functions:
+     src/wl_window.c          seatHandleCapabilities
+   Reason: the protocol does not oblige a compositor to send wl_keyboard.leave
+   before it drops the keyboard capability (the last keyboard unplugged, a
+   Bluetooth keyboard asleep), and GLFW then released the wl_keyboard but
+   kept the window as the keyboard's focus and the key repeat timer armed: a
+   key held as the keyboard went kept repeating into the window, read held
+   for good, and the window read focused after the compositor activated
+   another. The capability loss now runs the keyboard's leave (keys held in
+   a window that stays activated are released, the repeat stops, the focus
+   follows the activation, patch 11). mutter sends the leave; reproduced
+   on a private headless mutter 50.6 through a proxy that
+   withholds wl_keyboard.leave and key releases
+   (with and without key repeat, 2026-11-13). Upstreamable as it stands.
+
+16. The macOS build carries no Null platform and no EGL or OSMesa context.
+   Marker: RAYCLAY PATCH - Cocoa NSGL only
+   Upstream version: GLFW 3.5.1 (upstream's master 92dcf4ce, read 2026-11-14,
+   has no switch for it: src/CMakeLists.txt compiles the Null platform,
+   egl_context.c and osmesa_context.c for every platform).
+   Files and functions:
+     src/platform.c           _glfwSelectPlatform, glfwPlatformSupported,
+                              glfwGetVersionString
+     src/cocoa_window.m       _glfwCreateWindowCocoa, _glfwGetEGLPlatformCocoa,
+                              _glfwGetEGLNativeDisplayCocoa,
+                              _glfwGetEGLNativeWindowCocoa
+     src/cocoa_init.m         _glfwConnectCocoa (the EGL hooks of the platform
+                              table), _glfwTerminateCocoa
+   Reason: RayClay's macOS window seam opens a Cocoa window with an NSGL
+   context (the GL arm) or none (the Metal arm), and never asks for another
+   platform or context API, yet every macOS app linked the Null platform
+   (reached from _glfwSelectPlatform) and the EGL and OSMesa context code
+   (reached from _glfwCreateWindowCocoa and _glfwTerminateCocoa): 15.6 KB of
+   __TEXT that no RayClay app can run. Under RC_GLFW_COCOA_NSGL_ONLY, which
+   RayClay's CMakeLists.txt
+   defines for the glfw target on Apple only, none of it is referenced, so
+   none is linked. A caller that asks for it gets GLFW's
+   own refusal, never another choice: glfwInit with GLFW_PLATFORM_NULL fails
+   with GLFW_PLATFORM_UNAVAILABLE ("The requested platform is not supported",
+   as for a platform compiled out), glfwPlatformSupported(GLFW_PLATFORM_NULL)
+   is false, and a window asking for GLFW_EGL_CONTEXT_API or
+   GLFW_OSMESA_CONTEXT_API is refused with GLFW_API_UNAVAILABLE, which is
+   also what upstream answers on a Mac with no libEGL or libOSMesa installed;
+   glfwGetVersionString no longer names Null, EGL and OSMesa. Measured
+   2026-11-14 on ex00, AppleClang Release: __TEXT ends 15,656 B sooner (GL
+   with stb or cglyf fonts; 15,688 B on Metal), one 16 KB page fewer, the
+   stripped file 18,384 B smaller (Metal 18,336 B). The Linux and Windows
+   builds, and any other build of this tree that does not define the macro
+   (one that runs on the Null platform, say), keep all of it. The Vulkan
+   surface and joystick code stay: the platform table references them.
+
+17. An input method's composing text reaches the application.
+   Marker: RAYCLAY PATCH - preedit
+   Upstream version: GLFW 3.5.1 (upstream's master 92dcf4ce has no input
+   method API, read 2026-11-14; its open pull request 2130, "Add IME support
+   for each platform", head 068858ee of 2026-09-13, unmerged, has one).
+   Files and functions:
+     include/GLFW/glfw3.h     GLFWpreeditfun, glfwSetPreeditCallback,
+                              glfwSetPreeditCursorRectangle,
+                              glfwResetPreeditText, glfwSetTextInputFocus,
+                              GLFWcommitfun, glfwSetCommitCallback (new)
+     src/internal.h           _GLFW_PREEDIT, _GLFW_PREEDIT_MAX, _GLFWpreedit,
+                              _GLFWwindow.preedit, .textInputFocusInitialized,
+                              .textInputFocus, callbacks.preedit,
+                              callbacks.commit, _GLFWplatform's
+                              updatePreeditCursorRectangle, resetPreeditText
+                              and setTextInputFocus, _glfwInputPreedit,
+                              _glfwInputCommit, _glfwPreeditReserve,
+                              _glfwPreeditFree (declarations)
+     src/input.c              _glfwInputPreedit, _glfwInputCommit,
+                              _glfwPreeditReserve, _glfwPreeditFree and the
+                              six API functions (new)
+     src/window.c             glfwDestroyWindow (frees the preedit arrays)
+     include/GLFW/glfw3.h     GLFW_X11_ONTHESPOT (new; upstream's name and value)
+     src/init.c               glfwInitHint (GLFW_X11_ONTHESPOT)
+     src/internal.h           _GLFWinitconfig.x11.onTheSpotIMStyle
+     src/x11_platform.h       PFN_XSetICValues, PFN_XVaCreateNestedList,
+                              PFN_Xutf8ResetIC and their macros and slots,
+                              _GLFWwindowX11's four preedit callbacks,
+                              _GLFWlibraryX11.imStyle, the three X11 hooks
+     src/x11_init.c           hasUsableInputMethodStyle, inputMethodDestroyCallback,
+                              _glfwConnectX11 (the hooks), _glfwInitX11 (the
+                              three Xlib symbols)
+     src/x11_window.c         endPreedit, commitPreedit, preeditStartCallback,
+                              preeditDoneCallback, statusNothingCallback,
+                              preeditDrawCallback, preeditCaretCallback (new),
+                              inputContextDestroyCallback, processEvent
+                              (XFilterEvent, KeyPress, FocusIn, FocusOut),
+                              _glfwCreateInputContextX11,
+                              _glfwUpdatePreeditCursorRectangleX11,
+                              _glfwResetPreeditTextX11,
+                              _glfwSetTextInputFocusX11 (new)
+     src/cocoa_window.m       GLFWContentView.pendingKey, .pendingScancode,
+                              .pendingMods, .pendingState, reportPendingKey
+                              (new), keyDown:, markedRange, setMarkedText:,
+                              unmarkText, firstRectForCharacterRange:,
+                              insertText:, doCommandBySelector:;
+                              reportMarkedText, commitWhole, commitPreedit
+                              (new), windowDidResignKey:,
+                              _glfwUpdatePreeditCursorRectangleCocoa,
+                              _glfwResetPreeditTextCocoa,
+                              _glfwSetTextInputFocusCocoa (new)
+     src/cocoa_platform.h     the three Cocoa hooks (declarations)
+     src/cocoa_init.m         _glfwConnectCocoa (the three hooks of the
+                              platform table)
+   Reason: GLFW drops an input method's composing text on every platform: a
+   Chinese, Japanese or Korean user saw nothing of what they composed until
+   it was committed, where a browser shows it underlined at the caret with
+   the candidate window beside it. The five calls and the callback take the
+   names, parameters and meaning of upstream's pull request 2130, so a bump
+   to a GLFW that ships it converges on one API; GLFWcommitfun is RayClay's
+   alone (a commit of more than one code point arrives whole, so it is one
+   undo step). The common part only stores and dispatches: each platform's
+   arm fills the three platform hooks and calls _glfwInputPreedit, and a
+   platform with no arm leaves them NULL, where the calls do nothing and no
+   preedit is ever reported, which is upstream's behavior. Only a build with
+   a platform arm compiles it (_GLFW_PREEDIT: X11's, so Linux's, whose Wayland
+   hooks stay NULL until its arm, and Cocoa's), a Win32-only build never
+   (Windows composes through RayClay's own IMM32 code beside GLFW). RayClay's
+   GLFW host (under RC_GLFW_PREEDIT, which RayClay's CMakeLists.txt
+   sets where this tree is built for Linux or macOS) hands the preedit on as the window seam's `editing`, the
+   commit as its `text`, places the candidate window at the caret, and
+   detaches the input method while no text field has focus
+   (glfwSetTextInputFocus). A composition holds at most _GLFW_PREEDIT_MAX
+   (1,024) code points in grow-only arrays freed with the window.
+   THE X11 ARM. With GLFW_X11_ONTHESPOT (RayClay's host sets it) the input
+   context is created on-the-spot (XIMPreeditCallbacks, with no status, else
+   with empty status callbacks) where the server offers it, else upstream's
+   over-the-spot style, unchanged. The draw callback splices each change into
+   the kept text (the locale's multibyte text, read as UTF-8; the highlighted
+   run is the clause), the caret and done callbacks follow, and every end of a
+   composition is reported, a destroyed context or server included. While a
+   text field has the keyboard, a key press the server filtered is not a key
+   (the method composes with it, or hands it back unfiltered, and only a
+   reported press stamps the duplicate check, so the key handed back is not
+   dropped as ibus's duplicate); a commit of more than one code point goes to
+   the commit callback whole; the candidate window opens at the caret rect's
+   bottom-left (XNSpotLocation); focus out commits what was composed and
+   resets the context, as a browser keeps a composition at a blur. While no text
+   field has it, keys skip XFilterEvent and the context is unfocused, so an
+   input method composes nothing and eats no shortcut (no dead-key
+   composition either: nothing reads characters with no field focused but a
+   combo's type-ahead). Measured 2026-11-14 on Fedora under Xvfb with
+   ibus-daemon 1.5.34 --xim and a scripted engine.
+   THE COCOA ARM. GLFW's content view was already an NSTextInputClient but
+   kept the marked text to itself, reported every key BEFORE the text system
+   read it (so a Backspace inside a composition erased the field's own text
+   and the Enter that commits also submitted) and answered the candidate
+   window's question with the view's corner. With a text field attached the
+   view now holds each press while the text system reads it and reports it
+   only if no input method took it: setMarkedText: and unmarkText take it,
+   doCommandBySelector: hands it back (a Korean method's Enter after the
+   syllable it commits), and text typed with no composition follows its
+   key's press. The marked text goes out whole through _glfwInputPreedit,
+   its caret at the method's selection and that selection as the focused
+   clause; insertText: first ends a live composition, and a commit of more
+   than one code point goes to the commit callback whole.
+   firstRectForCharacterRange: answers the caret rectangle in screen
+   coordinates, and a moved caret invalidates the input context's character
+   coordinates so an open candidate window follows it. markedRange covers
+   the whole marked text (upstream's is one short). When the window resigns
+   key it commits the marked text as it stands (the input method forgets it),
+   as the X11 arm does at FocusOut. Detached, keyDown: no
+   longer calls interpretKeyEvents: the key and its characters arrive as
+   typed. macOS press-and-hold accents stay off (GLFW registers
+   ApplePressAndHoldEnabled NO, cocoa_init.m), as upstream has them.
+
+18. glfwInit can leave the X11 input method for the first text input focus.
+   Marker: RAYCLAY PATCH - lazy input method
+   Upstream version: GLFW 3.5.1 (upstream's master 92dcf4ce and its latest
+   tag 3.5.1 still open it in glfwInit, read 2026-11-15).
+   Files and functions:
+     include/GLFW/glfw3.h     GLFW_X11_LAZY_INPUT_METHOD (new, RayClay's value)
+     src/init.c               glfwInitHint (GLFW_X11_LAZY_INPUT_METHOD)
+     src/internal.h           _GLFWinitconfig.x11.lazyInputMethod
+     src/x11_platform.h       _GLFWlibraryX11.imDeferred,
+                              _glfwOpenInputMethodX11 (declaration)
+     src/x11_init.c           _glfwInitX11, _glfwOpenInputMethodX11 (new: the
+                              init's input method block, unchanged)
+     src/x11_window.c         _glfwSetTextInputFocusX11
+   Reason: glfwInit opened the input method before any window existed, and
+   with the local compose table (no XIM server, or @im=none) libX11 parses
+   that table twice there: XRegisterIMInstantiateCallback opens the method
+   once to test it, closes it, and the callback opens it again. Measured
+   2026-11-15 on Fedora under a private headless mutter's Xwayland (NVIDIA
+   615.78.08, en_GB.UTF-8): 8.3 ms for the registration alone (a direct
+   XOpenIM is 4.3 ms), 9.0 ms of glfwInit's 11.2 ms, and so of the 94 ms an
+   empty RayClay window took to be listed in _NET_CLIENT_LIST. RayClay's host
+   holds every window's text input focus off until a text field takes it
+   (entry 17), and keys skip XFilterEvent until then, so nothing read the
+   method before that focus. With GLFW_X11_LAZY_INPUT_METHOD set glfwInit
+   only marks it deferred; the first glfwSetTextInputFocus(window, GLFW_TRUE)
+   runs the init's block as it was (the locale modifiers, then the
+   registration, whose callback opens the method and gives every window its
+   input context), then focuses that window's context. Unset, the init is
+   upstream's. RayClay's GLFW host sets it beside GLFW_X11_ONTHESPOT.
+
+19. An X11 window can be made, and shown, before its GL library is loaded.
+   Marker: RAYCLAY PATCH - deferred context
+   Upstream version: GLFW 3.5.1 (upstream's master 92dcf4ce and its latest
+   tag 3.5.1 choose the visual from the GL library's configs, read
+   2026-11-15).
+   Files and functions:
+     include/GLFW/glfw3.h     GLFW_X11_DEFER_CONTEXT (new, RayClay's value)
+     include/GLFW/glfw3native.h  glfwCreateX11WindowContext (new)
+     src/internal.h           _GLFWwndconfig.x11.deferContext,
+                              _GLFWwindow.deferred
+     src/window.c             glfwWindowHint (GLFW_X11_DEFER_CONTEXT)
+     src/context.c            _glfwRefreshContextAttribs (no black frame for
+                              a deferred context)
+     src/x11_platform.h       the libxcb-glx GetFBConfigs types and loader
+                              (_GLFWlibraryGLX.xcb), _glfwChooseServerVisualGLX
+                              and _glfwCreateDeferredContextGLX (declarations)
+     src/glx_context.c        chooseGLXFBConfig (an optional visual, read
+                              first), createContextGLX (split from
+                              _glfwCreateContextGLX unchanged),
+                              _glfwTerminateGLX, getServerConfigAttrib,
+                              _glfwChooseServerVisualGLX and
+                              _glfwCreateDeferredContextGLX (new)
+     src/x11_window.c         _glfwCreateWindowX11,
+                              glfwCreateX11WindowContext (new)
+   Reason: GLX ties a window to a visual, and GLFW chose the visual from the
+   GL vendor library's GLXFBConfigs, so the window waited for that library
+   to load, its configs to be walked, the context and its first
+   make-current. Measured 2026-11-15 on Fedora under a private headless
+   mutter's Xwayland (NVIDIA 615.78.08): an empty RayClay window was listed
+   in _NET_CLIENT_LIST at about 85 ms (a bare Xlib window: 2.7 ms), the
+   vendor's load about 32 ms, each walk of its configs about 7 ms (GLFW made
+   two: the visual, then the context) and the first make-current about 32 ms.
+   The configs are the X SERVER's: one GLX GetFBConfigs request, through
+   libxcb-glx, lists every config with its visual and attributes without
+   loading any vendor code. With GLFW_X11_DEFER_CONTEXT glfwCreateWindow
+   chooses the visual from that list by chooseGLXFBConfig's own rules, keeps
+   the visual and the context configuration, and makes no context;
+   glfwCreateX11WindowContext later loads GLX and makes and refreshes the
+   context as glfwCreateWindow does, for the vendor's closest config OF THE
+   WINDOW'S VISUAL (the visual is read first, so every other config costs one
+   attribute read): the server's choice wherever the vendor lists the
+   server's configs, and still a config the window can take where it does
+   not. The refresh skips its clear to black and swap: the window is already
+   on screen by then, and that frame would show. Where the server's list
+   cannot be read (no libxcb-glx or libX11-xcb, no GLX on the server, an
+   error reply, no match), glfwCreateWindow takes upstream's path, which
+   reports what is missing, and glfwCreateX11WindowContext does nothing. The
+   read asks the server for GLX first: libxcb closes a connection that sends
+   a request of an extension the server lacks (an Xvfb run with -extension
+   GLX ended the process with "X connection broken" where upstream reports
+   "GLX extension not found"). Unset, the create is upstream's. RayClay's
+   GLFW host sets the hint, shows the window in its clear color and makes
+   the context after the show (rci_window_create).
+
+20. A covered Wayland window's present still reaches the compositor.
+   Marker: RAYCLAY PATCH - covered present
+   Upstream version: GLFW 3.5.1 (upstream's master returns before the swap
+   when the frame callback's 20 ms wait times out, read 2026-11-16).
+   Files and functions:
+     src/wl_window.c          _glfwWaitForEGLFrameWayland
+   Reason: on Wayland GLFW sets EGL's swap interval to 0 and waits for the
+   window's frame callback itself, for at most 20 ms, and when the wait
+   timed out it returned without swapping. A compositor sends no frame
+   callback to a surface it does not paint - mutter withholds it from a
+   window another window fully covers - and sends nothing when it paints
+   the window again. So every frame drawn while the window was covered was
+   dropped, except the first, and when the window was uncovered without
+   another change (the covering window moved or shrank aside) it showed the
+   last frame swapped before the cover; RayClay's runner, which counts a
+   presented frame as the window's picture and does not draw that picture
+   again, kept it there until the window drew something else. A wait that
+   times out now swaps at interval 0, as SDL's Wayland present does after
+   its 50 ms wait: the compositor holds the last frame drawn. The frame
+   callback still pending stays the one waited on and no new one is asked
+   for, so a covered window holds one callback, not one per frame, and
+   each of its presents still waits the 20 ms, which paces a loop drawing
+   only covered windows. A hidden window (glfwHideWindow) is still not
+   swapped. Upstreamable as it stands.
+
+21. A Wayland monitor's work area is its logical size, turned and scaled.
+   Marker: RAYCLAY PATCH - logical output size
+   Upstream version: GLFW 3.5.1 (upstream's master 92dcf4ce and its latest
+   tag 3.5.1 answer the current mode and keep no transform, read
+   2026-11-16).
+   Files and functions:
+     deps/wayland/xdg-output-unstable-v1.xml  (new: wayland-protocols 1.49,
+                              unchanged)
+     src/CMakeLists.txt       its generate_wayland_protocol line
+     src/wl_platform.h        the two xdg-output interface names,
+                              _GLFWlibraryWayland.xdgOutputManager,
+                              _GLFWmonitorWayland.xdgOutput, transform,
+                              logicalWidth, logicalHeight
+     src/wl_init.c            the protocol's header and code,
+                              registryHandleGlobal (zxdg_output_manager_v1),
+                              _glfwTerminateWayland
+     src/wl_monitor.c         outputHandleGeometry (the transform),
+                              xdgOutputHandleLogicalPosition,
+                              xdgOutputHandleLogicalSize, xdgOutputHandleDone,
+                              xdgOutputListener (new), outputHandleDone (the
+                              xdg_output asked for), _glfwFreeMonitorWayland,
+                              _glfwGetMonitorWorkareaWayland
+   Reason: glfwGetMonitorWorkarea is in screen coordinates, and on Wayland
+   those are the compositor's logical units, yet GLFW answered the output's
+   current mode: device px before the output's transform and its scale. A
+   1600 x 1000 output turned to portrait (logical 1000 x 1600) read 1600 x
+   1000, and the same output at 1.25 (logical 1280 x 800) read 1600 x 1000
+   too, while GLFW's content scale there is wl_output's whole number (2),
+   which a fractional scale rounds up, so no division of the mode gives the
+   logical size. RayClay's rcWindowSetSize caps a size by the work areas
+   (rci_window_set_size), so it took a portrait size as
+   landscape and let an oversize one overhang a scaled output. Where the
+   compositor has zxdg_output_manager_v1 (mutter, KWin, wlroots), each
+   output's xdg_output is asked for at its first wl_output.done (the
+   registry may announce the manager after the outputs, as mutter 50 does)
+   and its logical size is the work area; a window's show makes a roundtrip
+   (wl_window.c), so the size is in once a window has been shown, and until
+   it comes the area is the fallback that follows. Without
+   it the work area is the mode turned by wl_output's transform, as X11's
+   work area turns a rotated CRTC's mode, and not divided by the whole-number
+   scale, which would make it smaller than the output under a rounded-up
+   fractional scale. The position stays wl_output's. Measured 2026-11-16 on
+   a private headless mutter 50.6 (gdctl).
+   Upstreamable as it stands.
+
+22. A covered Wayland window does not hold the application's other windows.
+   Marker: RAYCLAY PATCH - starved present
+   Upstream version: GLFW 3.5.1 (upstream's master 92dcf4ce and its latest
+   tag 3.5.1 wait the 20 ms at every present, read 2026-11-16).
+   Files and functions:
+     src/wl_platform.h        _GLFWwindowWayland.egl.starved, egl.paced
+     src/wl_window.c          framesPaced (new), callbackHandleFrame,
+                              _glfwWaitForEGLFrameWayland
+   Reason: a covered window's frame wait times out (entry 20), so each of
+   its presents cost the whole 20 ms, and RayClay's runner presents its
+   windows one after another on one thread: one covered window that
+   animated held every window of the application, input included, near
+   50 Hz, and two near 25 Hz (measured on a private headless mutter 50.6: a
+   visible window beside a covered one drew 146 frames in 3 s). A window
+   whose last wait timed out is starved, and its wait takes no time when
+   another window's frame callback was answered since its own last present:
+   that window paced the loop, and a compositor answers a surface's
+   callback at most once a repaint, so the loop cannot spin. The wait still
+   reads the window's own queue, so the window is waited on again from the
+   present after its callback is answered (uncovered); the callback is
+   dispatched only by the wait, so an answered one is a wait that ended in
+   the compositor's pace. When no other window paced, the starved window
+   waits the 20 ms, so a loop that draws only covered windows waits once for
+   each of them a turn (one: 50 Hz, two: 25 Hz) and never spins. RayClay's
+   SDL host makes the same judgment from the present's duration
+   (rci_window_swap_buffers); here the wait knows whether
+   the callback came. Upstreamable as it stands.
+
+23. A Wayland window decorated by libdecor reports its frame.
+   Marker: RAYCLAY PATCH - frame size
+   Upstream version: GLFW 3.5.1 (upstream's master and its latest tag 3.5.1
+   answer only the fallback decorations' frame, read 2026-11-16).
+   Files and functions:
+     src/wl_platform.h        PFN_libdecor_frame_translate_coordinate,
+                              _GLFWlibraryWayland.libdecor's member for it
+     src/wl_init.c            its symbol, loaded optionally (not among the
+                              ones a missing one unloads libdecor for)
+     src/wl_window.c          _glfwGetWindowFrameSizeWayland
+   Reason: glfwGetWindowFrameSize answered 0 for a window libdecor
+   decorates, so RayClay's bound of a window opened larger than the output
+   could not count the title bar libdecor draws inside the
+   window geometry: on mutter 50 at 1600 x 1000 the window came up 1600 x
+   1000 with a 37 px bar (1037 tall), drew two frames so, and the compositor
+   then took it back to 1600 x 963. libdecor knows the bar once the frame has
+   met its first configure, which glfwShowWindow waits for: the content's
+   offset in the frame (libdecor_frame_translate_coordinate) is the top and
+   left edge; libdecor names no right or bottom one, and its gtk and cairo
+   plugins draw none inside the geometry. Before the show (no frame yet) the
+   answer is 0, as before. Measured 2026-11-16 on a private headless mutter
+   50.6, libdecor 0.2.5 (gtk plugin): see
+   rci_window_glfw_fit_shown in rayclay.h.
+   Upstreamable as it stands.

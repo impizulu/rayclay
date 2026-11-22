@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="146.2857 5.2857 731.4286 731.4286" width="1024" height="1024">
+<!-- Authored in the SVG subset RayClay renders. It ignores transform, clip-path and
+     opacity, mapping the viewBox onto the destination box and drawing each shape at
+     its raw coordinates, so a transform would move the art without moving the frame
+     and the logo would sit off-center. The viewBox is framed around the art as drawn,
+     the tongue is pre-intersected with the mouth, and the blush alpha is baked into
+     its color. Filled paths also stay under RC_ICON_MAX_PTS (256): the icon header
+     made from this logo drops a longer one's tail. Re-adding any of the three breaks it. -->
+
+  <!-- ears -->
+  <path d="M330 380 L228 322 L342 448 Z" fill="#5f6bb0"/>
+  <path d="M694 380 L796 322 L682 448 Z" fill="#5f6bb0"/>
+
+  <!-- head -->
+  <ellipse cx="512" cy="400" rx="200" ry="185" fill="#5f6bb0"/>
+
+  <!-- nose -->
+  <ellipse cx="512" cy="480" rx="16" ry="11" fill="#47528f"/>
+
+  <!-- eyes (sneaky sideways glance) -->
+  <ellipse cx="440" cy="440" rx="38" ry="44" fill="#ffffff"/>
+  <ellipse cx="590" cy="440" rx="38" ry="44" fill="#ffffff"/>
+  <circle cx="454" cy="450" r="17" fill="#23264a"/>
+  <circle cx="604" cy="450" r="17" fill="#23264a"/>
+  <circle cx="448" cy="442" r="6" fill="#ffffff"/>
+  <circle cx="598" cy="442" r="6" fill="#ffffff"/>
+  <!-- cheeky brows: one raised, one low -->
+  <path d="M402 372 Q436 350 472 366" stroke="#3a4373" stroke-width="13" stroke-linecap="round" fill="none"/>
+  <path d="M562 388 Q598 378 632 392" stroke="#3a4373" stroke-width="13" stroke-linecap="round" fill="none"/>
+
+  <!-- mischievous grin, tongue + one cheeky tooth -->
+  <path d="M395 515 Q512 640 645 495 Q512 575 395 515 Z" fill="#33305c"/>
+  <path d="M561.66 559.71 L552.36 556.8 L541.91 554.87 L530.82 554.04 L519.59 554.32 L508.75 555.7 L498.82 558.14 L490.25 561.5 L483.44 565.63 L479.5 569.56 L481.16 569.97 L485 570.78 L488.85 571.46 L492.7 572 L496.57 572.41 L500.44 572.7 L504.32 572.84 L508.2 572.86 L512.1 572.75 L516 572.5 L519.91 572.12 L523.83 571.61 L527.75 570.97 L531.69 570.2 L535.63 569.29 L539.58 568.25 L543.54 567.08 L547.5 565.78 L551.47 564.35 L555.45 562.78 L559.44 561.09 L562.05 559.89 Z" fill="#e8735e"/>
+  <path d="M578 518 L610 514 L598 552 Z" fill="#ffffff"/>
+
+  <!-- blush -->
+  <ellipse cx="362" cy="498" rx="24" ry="15" fill="#e8735e73"/>
+  <ellipse cx="666" cy="482" rx="24" ry="15" fill="#e8735e73"/>
+
+  <!-- jester hat: two-tone floppy lobes -->
+  <path d="M330 345 C300 318 248 242 226 192 C310 162 460 162 512 207 L512 370 Q398 382 330 345 Z" fill="#f2894b"/>
+  <path d="M694 345 C724 318 776 242 798 192 C714 162 564 162 512 207 L512 370 Q626 382 694 345 Z" fill="#f6ead1"/>
+  <!-- harlequin diamonds, colors swapped lobe to lobe -->
+  <path d="M392 248 L412 286 L392 324 L372 286 Z" fill="#f6ead1"/>
+  <path d="M632 248 L652 286 L632 324 L612 286 Z" fill="#f2894b"/>
+  <!-- hat trim -->
+  <path d="M330 345 Q512 398 694 345" stroke="#47528f" stroke-width="18" stroke-linecap="round" fill="none"/>
+  <!-- bells -->
+  <circle cx="220" cy="184" r="27" fill="#f6ead1"/>
+  <circle cx="804" cy="184" r="27" fill="#f6ead1"/>
+  <path d="M208 192 L232 192" stroke="#c9773f" stroke-width="5" stroke-linecap="round"/>
+  <path d="M792 192 L816 192" stroke="#c9773f" stroke-width="5" stroke-linecap="round"/>
+
+</svg>

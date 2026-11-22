@@ -1,0 +1,2166 @@
+# PINS - the upstream decoders of RayClay's media profile (TOML).
+#
+# The upstream files beside this one (pristine but for the twelve patches RAYCLAY-PATCHES.txt lists in dr_flac.h and
+# stb_vorbis.c), their license texts (LICENSES/, and libwebp's own COPYING, PATENTS and
+# AUTHORS at the root of libwebp/, where its sources' headers name them) and this file are DATA ONLY. RayClay's own
+# profile code is first-party: the audio bridge (rc_media_profile.c, rc_media_profile.h and the profile's
+# CMakeLists.txt) and the WebP bridge (rc_image_webp_profile.c, its header
+# and rc_image_webp_names.h); all six ship beside this file, in the same
+# mediaprofile/ directory.
+#
+# Read by:
+#   - a checksum check: each [[pin]]'s `file`, and each of its [[pin.files]], must hash to its `sha256` and
+#     measure `size` bytes; README.md's list of every shipped file's sha256 must say the same;
+#   - the profile's identity TAG, a hash of its pins and its sources taken whenever they change: the anchor lines
+#     (RCI_MEDIA_PROFILE_ANCHOR in rc_media_profile.h and rayclay.h, RCI_IMAGE_WEBP_ANCHOR in
+#     rc_image_webp_profile.h and rayclay.h) name it, so a profile change renames both anchors: every program
+#     that calls rcMediaOpen on Linux, or rcLoadImage off Apple, is then rebuilt against the new archive, never
+#     linked to a stale one. A build recomputes nothing: the TAG is the string the profile shipped with.
+#
+# Imported 2026-11-04. Each file was checked on import against two independent sources: its raw download at the
+# pinned commit (sha256 below), and the git blob id GitHub's contents API answers for the same path at the same commit
+# (`blob` below; `git hash-object <file>` recomputes it). For a pin with `patches` (dr_flac.h, stb_vorbis.c, patched
+# 2026-11-05), the download is `upstream_size` / `upstream_sha256` and `blob` is upstream's file's, while `size` and
+# `sha256` are the shipped, patched file's. stb_vorbis.c also matched byte for byte a second,
+# independent copy of nothings/stb's repository. libwebp: the release tarball's OpenPGP signature verified
+# (the WebP release signing key, `signer` below), and each of the 87 files shipped matched byte for byte the same
+# path in GitHub's archive of the release tag's commit. nestegg and libopus were imported 2026-11-07; the comment
+# above each one's [[pin]] says how its files were checked.
+#
+# Why these: the profile first named dr_mp3 0.7.3 and dr_flac master f1b5fc367fc6 (after its 2026-10-28 seek fixes, "Fix a
+# possible crash with seeking"); on 2026-10-30 upstream released both as tags, dr_mp3 0.7.4 and dr_flac 0.13.4, which
+# carry those fixes, so the profile pins the released tags. stb_vorbis 1.22 is the latest release of nothings/stb's
+# decoder (its last commit to the file). Each is royalty-free: MP3's licensing program ended 2017-04-23,
+# FLAC and Vorbis were never patent-encumbered. libwebp 1.6.0 is the latest release; BSD-3-Clause
+# with Google's royalty-free patent grant (PATENTS). Its decoder and demux only, the files upstream's own CMake and
+# Makefile.am build libwebpdecoder and libwebpdemux from, without the MIPS32, MIPS DSP R2 and MSA sources (no
+# RayClay target is MIPS: an x86, Arm or wasm build compiles them to nothing) and without the encoder, sharpyuv,
+# mux, examples and build scripts. nestegg (ISC; Firefox's WebM demuxer) and libopus 1.6.1 (the latest release of
+# the reference codec; BSD-3-Clause with royalty-free patent licenses) are WebM's demuxer and its Opus decoder for
+# Linux's video player (added 2026-11-07), pristine, decoders only.
+
+[[pin]]
+name = "dr_mp3"
+version = "0.7.4"
+file = "dr_mp3.h"
+released = "2026-10-30"
+spdx = "Unlicense OR MIT-0"
+license = "LICENSES/dr_libs-LICENSE.txt"
+url = "https://raw.githubusercontent.com/mackron/dr_libs/aec2dd20667f54acfdb66031217df6d240f56c52/dr_mp3.h"
+tag = "mp3-0.7.4"
+commit = "aec2dd20667f54acfdb66031217df6d240f56c52"
+blob = "46ee903b62dd6e3eaf7e5039c2cf616d07c19c37"
+size = 198998
+sha256 = "f5c8020eeebb79877184432efdd2651f24869f5bb8f379d45450fd0aed1ee915"
+
+[[pin]]
+name = "dr_flac"
+version = "0.13.4"
+file = "dr_flac.h"
+released = "2026-10-30"
+spdx = "Unlicense OR MIT-0"
+license = "LICENSES/dr_libs-LICENSE.txt"
+url = "https://raw.githubusercontent.com/mackron/dr_libs/806ee9ada8ca9827b22f76827f739c290f37ba48/dr_flac.h"
+tag = "flac-0.13.4"
+commit = "806ee9ada8ca9827b22f76827f739c290f37ba48"
+blob = "6d66ea2d2eeb50e10241ea138dd4f70a97a79e4d"
+# PATCHED: RayClay patch 7 (RAYCLAY-PATCHES.txt, 2026-11-05). size and sha256 are
+# the shipped file's; upstream_size and upstream_sha256 are the raw download's at `commit` (`blob` stays upstream's).
+upstream_size = 549189
+upstream_sha256 = "b8078eeb5d523502eb7964508cd7ec8450bc79d383bec90aa17fd9e2fefd9c24"
+patches = "7"
+size = 550206
+sha256 = "ee9fea28959d2a110d518b9086c8d631240c6e321a8bf734ff67a5897c9ff405"
+
+[[pin]]
+name = "stb_vorbis"
+version = "1.22"
+file = "stb_vorbis.c"
+released = "2021-07-12"
+spdx = "MIT OR Unlicense"
+license = "LICENSES/stb-LICENSE.txt"
+url = "https://raw.githubusercontent.com/nothings/stb/1ee679ca2ef753a528db5ba6801e1067b40481b8/stb_vorbis.c"
+commit = "1ee679ca2ef753a528db5ba6801e1067b40481b8"
+blob = "3e5c2504c08f76b9d04e4adfbce80818631e835e"
+# PATCHED: RayClay patches 1-6 and 8-12 (RAYCLAY-PATCHES.txt, 2026-11-05). size and sha256 are
+# the shipped file's; upstream_size and upstream_sha256 are the raw download's at `commit` (`blob` stays upstream's).
+upstream_size = 192790
+upstream_sha256 = "4c7cb2ff1f7011e9d67950446b7eb9ca044f2e464d76bfbb0b84dd2e23e65636"
+patches = "1-6, 8-12"
+size = 198744
+sha256 = "7c8a3f5c17f366c384a4ac41b97e5c9a5af921d24b303f15a5b6913f31825bb0"
+
+# libwebp's decoder and demux: `dir` is its root, each [[pin.files]] one file shipped there. `url` is the
+# release tarball the files came from (`tarball_sha256` measured on import), `signature` its OpenPGP signature, made
+# by `signer` (the fingerprint of "WebP release signing key <webp-discuss@webmproject.org>").
+[[pin]]
+name = "libwebp"
+version = "1.6.0"
+dir = "libwebp"
+released = "2025-06-30"
+spdx = "BSD-3-Clause"
+license = "libwebp/COPYING"
+patents = "libwebp/PATENTS"
+url = "https://storage.googleapis.com/downloads.webmproject.org/releases/webp/libwebp-1.6.0.tar.gz"
+tarball_size = 4296070
+tarball_sha256 = "e4ab7009bf0629fd11982d4c2aa83964cf244cffba7347ecd39019a9e38c4564"
+signature = "https://storage.googleapis.com/downloads.webmproject.org/releases/webp/libwebp-1.6.0.tar.gz.asc"
+signer = "6B0E6B70976DE303EDF2F601F9C3D6BDB8232B5D"
+tag = "v1.6.0"
+commit = "4fa21912338357f89e4fd51cf2368325b59e9bd9"
+
+[[pin.files]]
+file = "libwebp/AUTHORS"
+size = 3279
+sha256 = "f251be89fd442bd9d701360730aea163cc8e2076ff03528f59267dc2c4f8b60a"
+
+[[pin.files]]
+file = "libwebp/COPYING"
+size = 1496
+sha256 = "5aec868f669e384a22372a4e8a1a6cd7d44c64cd451f960ca69cc170d1e13acf"
+
+[[pin.files]]
+file = "libwebp/PATENTS"
+size = 1436
+sha256 = "cc3273e0694ea5896145e0677699b53471b03ea43021ddc50e7923fbb9f5023c"
+
+[[pin.files]]
+file = "libwebp/src/dec/alpha_dec.c"
+size = 8294
+sha256 = "fdc26ce284c26ad819a7ce7c35f7bb4b146b844cafcabf9c6c421a8178c4101e"
+
+[[pin.files]]
+file = "libwebp/src/dec/alphai_dec.h"
+size = 1736
+sha256 = "051d1ec0195bb7fd5e44b18dc3f0c8a928f5597c4e28cb36d47de35ef532a41c"
+
+[[pin.files]]
+file = "libwebp/src/dec/buffer_dec.c"
+size = 10765
+sha256 = "448981ff77aae496fae9ec1c9292011f5239f58704cf3a89899ab153d1072963"
+
+[[pin.files]]
+file = "libwebp/src/dec/common_dec.h"
+size = 1794
+sha256 = "89eb36f74a027e5e40176ba73d8e1e95e62803cb3de97bd798922079f412a2f6"
+
+[[pin.files]]
+file = "libwebp/src/dec/frame_dec.c"
+size = 28290
+sha256 = "0cf084285d0fb94e9f27ba7a4c5381afcff13d3fb0bfa2123a73ce31a6f2be72"
+
+[[pin.files]]
+file = "libwebp/src/dec/idec_dec.c"
+size = 31958
+sha256 = "3665583e435c97f94baf8589e67286bdb390358e0702183f056b3ce6aafd84e1"
+
+[[pin.files]]
+file = "libwebp/src/dec/io_dec.c"
+size = 24192
+sha256 = "5f5c1c75d6440bcf44f7d39a8fc9012f8781c0ac621b918d27b29b3c86723328"
+
+[[pin.files]]
+file = "libwebp/src/dec/quant_dec.c"
+size = 4172
+sha256 = "08b20b9b4b8352f4cd46c672730a2687c6e8c9873599460670950de0a81d9ee4"
+
+[[pin.files]]
+file = "libwebp/src/dec/tree_dec.c"
+size = 23658
+sha256 = "d49bcf9ea2e7b2bdee239be9848aaae90f3be83f392500fa9b2f163132f59320"
+
+[[pin.files]]
+file = "libwebp/src/dec/vp8_dec.c"
+size = 22777
+sha256 = "548c31dc8a3eae05b1ec285e2da750aba159079d4fadee4b5f0f73b34fba7856"
+
+[[pin.files]]
+file = "libwebp/src/dec/vp8_dec.h"
+size = 7103
+sha256 = "2e34adde9a6d4ae4bba16a03d9d604a49b90dfc30dbec7e436b9934a24120e37"
+
+[[pin.files]]
+file = "libwebp/src/dec/vp8i_dec.h"
+size = 11804
+sha256 = "56422f4c59e25d44b0e7045a8e6c80f196862dcc77a9948054ac0b1e1c093d00"
+
+[[pin.files]]
+file = "libwebp/src/dec/vp8l_dec.c"
+size = 62514
+sha256 = "49e4aec24d95d70df3c53e9ae53d5f3bc5646012d9f1d0968a5f88936f310653"
+
+[[pin.files]]
+file = "libwebp/src/dec/vp8li_dec.h"
+size = 5508
+sha256 = "4f1bc8d0a4ad64816f5d19ed6ef95533d00fb548b1b51a7ba85b65d88fd6ae14"
+
+[[pin.files]]
+file = "libwebp/src/dec/webp_dec.c"
+size = 33243
+sha256 = "76c61ca30205025c758cc215af96296ecc5cde882c1d668ded9e89d7d2bae80c"
+
+[[pin.files]]
+file = "libwebp/src/dec/webpi_dec.h"
+size = 6455
+sha256 = "78a7d476c29c7c2ca41ca88f2d9111e33855b8b7c6eb186f23ab01585f252475"
+
+[[pin.files]]
+file = "libwebp/src/demux/anim_decode.c"
+size = 17495
+sha256 = "4bbeb1790b33c33fd65cc414cd7c471249b0fa2fa1a11a7d37a89e06e8d7bd28"
+
+[[pin.files]]
+file = "libwebp/src/demux/demux.c"
+size = 31935
+sha256 = "981ea5940c609ecf708f0879bab96bdff4350e3cdc52da6471a3258989173183"
+
+[[pin.files]]
+file = "libwebp/src/dsp/alpha_processing.c"
+size = 19532
+sha256 = "dd3ffe4d16382e4175ab9c9b96ababc4e0363a01d9d98737b20869c51df62444"
+
+[[pin.files]]
+file = "libwebp/src/dsp/alpha_processing_neon.c"
+size = 7261
+sha256 = "0fd418b9d3394639fc5780ebb2ac04868fd838d6e2d8ec1b30616620e10329ae"
+
+[[pin.files]]
+file = "libwebp/src/dsp/alpha_processing_sse2.c"
+size = 17558
+sha256 = "0ce2f30345349be049dd712d87503ce280439ebe47ae35df870dc0fdc50b462c"
+
+[[pin.files]]
+file = "libwebp/src/dsp/alpha_processing_sse41.c"
+size = 3820
+sha256 = "0c00a6a5a9b6af4091ca34437b2eeff110736a256df30e3aa31144c2535e39a7"
+
+[[pin.files]]
+file = "libwebp/src/dsp/common_sse2.h"
+size = 8040
+sha256 = "1c299ca6a84bf59d9e0bf0c2edad93f231c0a9a35bc2f75f0789df78b65231b2"
+
+[[pin.files]]
+file = "libwebp/src/dsp/common_sse41.h"
+size = 4658
+sha256 = "d8cff4e7687b071d2fba3270f1b0dc6548e9151d1ec726d85b63c43bbc7b0df6"
+
+[[pin.files]]
+file = "libwebp/src/dsp/cpu.c"
+size = 7653
+sha256 = "cd231d22bb17d9ec9a6f17daa3429be2a3e03adb5eb1472807857e43622c684c"
+
+[[pin.files]]
+file = "libwebp/src/dsp/cpu.h"
+size = 9231
+sha256 = "272cb2a8aa81d6355afecdea7ea344c90c2df58e6f51e01aa8bc4bf866d0be59"
+
+[[pin.files]]
+file = "libwebp/src/dsp/dec.c"
+size = 28153
+sha256 = "ceea12ceb6266d129e97448da20394769b003b1b29a1a0b20f09c9e837b425d3"
+
+[[pin.files]]
+file = "libwebp/src/dsp/dec_clip_tables.c"
+size = 24009
+sha256 = "4581e8fe4a4a71a1b247adfad0cb84831378d2fe405a2c057c41b0ae0fe17c0e"
+
+[[pin.files]]
+file = "libwebp/src/dsp/dec_neon.c"
+size = 69683
+sha256 = "12a9552e9ab7aa3f0619f04cae9bce9009e23e82b3df86aab08e811d2af949ff"
+
+[[pin.files]]
+file = "libwebp/src/dsp/dec_sse2.c"
+size = 47956
+sha256 = "7338c14409532be4663e7adf2e5d5c3f8368c0f54da4aceb72dba6c45402fd2e"
+
+[[pin.files]]
+file = "libwebp/src/dsp/dec_sse41.c"
+size = 1420
+sha256 = "f63c722459d315ef6c8527bf1d611c7ff620a370805a2915cb5cf0a42d5edbde"
+
+[[pin.files]]
+file = "libwebp/src/dsp/dsp.h"
+size = 23712
+sha256 = "de2cd2249ac7354e303deaff8691a32c6758fb41d9acba922d3b91141709b8d8"
+
+[[pin.files]]
+file = "libwebp/src/dsp/filters.c"
+size = 8938
+sha256 = "57ae0d3cac9588febbf8e232232d8e417336dad5bf5e84560a4eaa4cf02b540c"
+
+[[pin.files]]
+file = "libwebp/src/dsp/filters_neon.c"
+size = 11048
+sha256 = "559b2730b913162d404c76f33b12469f30dcac83e026ee4f9e6df605b72186b4"
+
+[[pin.files]]
+file = "libwebp/src/dsp/filters_sse2.c"
+size = 12650
+sha256 = "b2c0d5e879149f6aa2af8eecc499a418220b1cfe4631988bb51804de73b8f1e5"
+
+[[pin.files]]
+file = "libwebp/src/dsp/lossless.c"
+size = 26406
+sha256 = "bd5a856ad112eb33b3e470b483d48f86c8250728b36dfe1d137f5b36a2c70b76"
+
+[[pin.files]]
+file = "libwebp/src/dsp/lossless.h"
+size = 12871
+sha256 = "3c0883abadfd6ca043e60c212a129e35633c9deb7fdaacb214a5680666b1bc8a"
+
+[[pin.files]]
+file = "libwebp/src/dsp/lossless_avx2.c"
+size = 18843
+sha256 = "e2b591968e6b3b575220bf5ac0792d26a433b260ba99e9bf9c5b5fa265f088ed"
+
+[[pin.files]]
+file = "libwebp/src/dsp/lossless_common.h"
+size = 8435
+sha256 = "1e37c5f845073710fd7ccaabbc9b7b8d1a3a1cd17e09e49ffcea9b09f5723258"
+
+[[pin.files]]
+file = "libwebp/src/dsp/lossless_neon.c"
+size = 26687
+sha256 = "28a42dcdc5012c4394cf1c3fcbb1e91bab60347558644bb1f3c49c6eeed76f0a"
+
+[[pin.files]]
+file = "libwebp/src/dsp/lossless_sse2.c"
+size = 31910
+sha256 = "f826ff534c35da1958918b5987a00dbc4884627a9f5c13cbc64e60779a54a645"
+
+[[pin.files]]
+file = "libwebp/src/dsp/lossless_sse41.c"
+size = 5561
+sha256 = "83f94991acb33a58c8bf440ef8a20935e0f55241b8215e06cb565cbee8c40b17"
+
+[[pin.files]]
+file = "libwebp/src/dsp/neon.h"
+size = 4031
+sha256 = "69bca778703e422ffcdc4fd546599cbd916fcf32bcc1a91cdc49cc22ed0e553f"
+
+[[pin.files]]
+file = "libwebp/src/dsp/rescaler.c"
+size = 8304
+sha256 = "47e45d83fbb3eec2ede6b02e107f1df83de693282d5441d4a8d41b13c52f236e"
+
+[[pin.files]]
+file = "libwebp/src/dsp/rescaler_neon.c"
+size = 7453
+sha256 = "7e62a1fd66a3d72368af9282f63fe958937401cf4365b07ff1a2093a625474b3"
+
+[[pin.files]]
+file = "libwebp/src/dsp/rescaler_sse2.c"
+size = 14579
+sha256 = "c28260db5bb9feb3c95533abe967349f858d48b7b99968f7999694a8f228d2bf"
+
+[[pin.files]]
+file = "libwebp/src/dsp/upsampling.c"
+size = 15863
+sha256 = "21b05126aff3fbe902655a7081e3a538f8d1ca6cc9e0907c607e1c4c50ba0a9f"
+
+[[pin.files]]
+file = "libwebp/src/dsp/upsampling_neon.c"
+size = 16440
+sha256 = "f1fa58068f5382b74bc4c6db81c87a8a9c79a7c3e7689cf83fbf2d1775b79e8e"
+
+[[pin.files]]
+file = "libwebp/src/dsp/upsampling_sse2.c"
+size = 15689
+sha256 = "463e059ee5d310f2a156bb975a7a06a780d1a5eb3cbc4c1180f2cb679401f247"
+
+[[pin.files]]
+file = "libwebp/src/dsp/upsampling_sse41.c"
+size = 13892
+sha256 = "3d90804357657f438656d54afc4dbb313e670228cdd3dd3ca79a0b034f694ef7"
+
+[[pin.files]]
+file = "libwebp/src/dsp/yuv.c"
+size = 9728
+sha256 = "1d334957aee6eb67862e7c06f60ffd19b7661f3fce831385de1ba408dc426311"
+
+[[pin.files]]
+file = "libwebp/src/dsp/yuv.h"
+size = 8467
+sha256 = "5805c01f84a677e50bf0d16cd903b78d25c2a0c46fe17c67ce0e48f11f3d512b"
+
+[[pin.files]]
+file = "libwebp/src/dsp/yuv_neon.c"
+size = 7396
+sha256 = "2441f4e932e3cbd008c7c545aa06433d5613268c9705fdb88efe9586b12caf23"
+
+[[pin.files]]
+file = "libwebp/src/dsp/yuv_sse2.c"
+size = 30298
+sha256 = "492192af611e7dc43fe10f4115cb6e4bcfa506b65177c1e3acfc3db1436a6b22"
+
+[[pin.files]]
+file = "libwebp/src/dsp/yuv_sse41.c"
+size = 24716
+sha256 = "1b45b11a736e1f40075a0ba316f970eabd860ea7aee6c859d089a69e139c37b9"
+
+[[pin.files]]
+file = "libwebp/src/utils/bit_reader_inl_utils.h"
+size = 5930
+sha256 = "2fd9be790a86039e443e5f49f61dc2cc5cb8e8d313cbb40e164362fa4db23241"
+
+[[pin.files]]
+file = "libwebp/src/utils/bit_reader_utils.c"
+size = 9097
+sha256 = "f639602d395ff4a02ea351b04d3b92ae170751889a9d313e1b196ddb883521f3"
+
+[[pin.files]]
+file = "libwebp/src/utils/bit_reader_utils.h"
+size = 7708
+sha256 = "e08a177ee1ae47c945fe0f029673c6edba09c69bd81e2fae8f6e3ed671bd79d5"
+
+[[pin.files]]
+file = "libwebp/src/utils/color_cache_utils.c"
+size = 1701
+sha256 = "c7dd35a6d3cee5ff7f928d900a5bdc02b20cc7018f3a9f7a2f87ae8e87457e8f"
+
+[[pin.files]]
+file = "libwebp/src/utils/color_cache_utils.h"
+size = 2917
+sha256 = "82ba22d02e8d03c5785237badb9784d32ad8a0e78b12724ffe744892fd902032"
+
+[[pin.files]]
+file = "libwebp/src/utils/endian_inl_utils.h"
+size = 2851
+sha256 = "7bdca5f4b45730eecdb92b2ece48618a664466065886e0e0115b122ecd2fc748"
+
+[[pin.files]]
+file = "libwebp/src/utils/filters_utils.c"
+size = 2588
+sha256 = "dfbd55abe3c7e4684e2b8fe5efe0093b19d55cd3b7b982685cdbf31370eba1ff"
+
+[[pin.files]]
+file = "libwebp/src/utils/filters_utils.h"
+size = 986
+sha256 = "72c0dbf2ef0a33813030cfa471ffc425ae2c9b716ebff07d73681362b3fe92b3"
+
+[[pin.files]]
+file = "libwebp/src/utils/huffman_utils.c"
+size = 10624
+sha256 = "15c1d89d7567c2121bae05ce8dea6deba160945dd398bc6d6b9a88b40ba523eb"
+
+[[pin.files]]
+file = "libwebp/src/utils/huffman_utils.h"
+size = 4537
+sha256 = "6a4c855766558f22a0ee204089fb86c3dcca548ed0f44a85e8d6cdf0f73cc177"
+
+[[pin.files]]
+file = "libwebp/src/utils/palette.c"
+size = 14146
+sha256 = "26e90df0dc0b2bc7a251d2dc021f923af7f1529f8dddeeb80ea50b7dd6c31c9a"
+
+[[pin.files]]
+file = "libwebp/src/utils/palette.h"
+size = 2660
+sha256 = "a4a08586739af0748fdb8dcb53501b1ea74b2fa1589f8170c95ad3082283e7f6"
+
+[[pin.files]]
+file = "libwebp/src/utils/quant_levels_dec_utils.c"
+size = 9072
+sha256 = "d453e3595e19123e9af2696201bf55e404477d6ca3628d9324f5830ea3e73417"
+
+[[pin.files]]
+file = "libwebp/src/utils/quant_levels_dec_utils.h"
+size = 1254
+sha256 = "bb046261ae6e07530a0aedbb9f73e8e83924815734119dca8c88afa4e1588350"
+
+[[pin.files]]
+file = "libwebp/src/utils/random_utils.c"
+size = 1863
+sha256 = "b41422c972d1b76ee1f99fbf419d5e026ec2baa0a4fe08bb7939c31d083c7b28"
+
+[[pin.files]]
+file = "libwebp/src/utils/random_utils.h"
+size = 2111
+sha256 = "c30dac4531cbb06de6463854175c106d8f1de10e64b00fa47e62f8d12d15f0cb"
+
+[[pin.files]]
+file = "libwebp/src/utils/rescaler_utils.c"
+size = 5945
+sha256 = "8a3afac6a5a917a0508c1d8f2c1daf595f0d77bc66b3ed9136c5af9e432c8431"
+
+[[pin.files]]
+file = "libwebp/src/utils/rescaler_utils.h"
+size = 4111
+sha256 = "ea2e5cb89d1c6050613f758a91f9a35c53b5e0d9d4dfa9245e837b3e2c4835ae"
+
+[[pin.files]]
+file = "libwebp/src/utils/thread_utils.c"
+size = 11145
+sha256 = "474b6d6cc3f8c3197af2d31cb1cdc7d6e88db964db260f2e7d5e9916b2e65594"
+
+[[pin.files]]
+file = "libwebp/src/utils/thread_utils.h"
+size = 3689
+sha256 = "dbac595ac7ea89f43fe6b796ed0e2b6944e3d2326caf35aaeb58f3289b918bf1"
+
+[[pin.files]]
+file = "libwebp/src/utils/utils.c"
+size = 8892
+sha256 = "c8d90b4ccd536136ac710321c2632912a1f6ee2492a423e14ab9deb159490a56"
+
+[[pin.files]]
+file = "libwebp/src/utils/utils.h"
+size = 7152
+sha256 = "9770471e412a9429fef2c1b3b8adb12e5e8716b79ae87ab28a3a220a285b5dd8"
+
+[[pin.files]]
+file = "libwebp/src/webp/decode.h"
+size = 24342
+sha256 = "e554551d085f234e930f36b5879a77ef58bfea34c48ebfd620426e63b224025c"
+
+[[pin.files]]
+file = "libwebp/src/webp/demux.h"
+size = 16019
+sha256 = "9b0d10c0fa1ac2dc750c4d687b038e40a685bb9240cb045759f5b9546017361d"
+
+[[pin.files]]
+file = "libwebp/src/webp/encode.h"
+size = 28501
+sha256 = "928e8d3ed502baa0f47ed10913ee018ed6172afcd4f308e0ea005a126b83f27e"
+
+[[pin.files]]
+file = "libwebp/src/webp/format_constants.h"
+size = 4016
+sha256 = "6f26d54038b770c5f9ddcd8f8e2da05d43c92168cb30f0e7060240f90df5fd7f"
+
+[[pin.files]]
+file = "libwebp/src/webp/mux.h"
+size = 25966
+sha256 = "c72cf593f8194c671efcade33f1678294380120d45a337511d612a3acb643f35"
+
+[[pin.files]]
+file = "libwebp/src/webp/mux_types.h"
+size = 3260
+sha256 = "ca789c9fe2edc52f759cb3888e9171ee44b5c12f2db21458f96176d578bc897e"
+
+[[pin.files]]
+file = "libwebp/src/webp/types.h"
+size = 3177
+sha256 = "992d2ffe864adb6d80cc91b7a062074d167ed96772f28d104a650148eca31794"
+
+# libvpx's VP8 and VP9 decoders, for Linux's player: 1.17.0 is the latest release, BSD-3-Clause with
+# Google's royalty-free patent grant (PATENTS). `dir` is its root, each [[pin.files]] one file shipped there, from
+# the release tag `tag` (the annotated tag object `tag_object`) at `commit`, cloned from `url`, the project's own
+# repository. Each of the 177 upstream files matched byte for byte the same path in a second clone of the tag from
+# `mirror`, GitHub's mirror. The six marked `generated` are not upstream's files: upstream's configure wrote them
+# from the same tree with the options in `configure` (Fedora 44, gcc 16.2.1), a portable C build that runs on any
+# CPU with no assembler (vpx_config.h, the run-time dispatch tables vp8_rtcd.h, vp9_rtcd.h, vpx_dsp_rtcd.h and
+# vpx_scale_rtcd.h, all naming the C functions, and vpx_version.h); the profile builds from them and configures
+# nothing. The files are the 71 .c files of the 82 that build compiles into libvpx.a which the decoder interface
+# reaches (vp8dx.h's two decoders, their objects' references followed), and the 103 upstream headers they include;
+# the other 11 (the encoder API, the image allocator, the frame scalers, a YUV writer, the build string of
+# vpx_config.c, and helpers no decoder object names) are left out. RayClay's rc_mp_vpx_names.h, beside the bridge
+# (rc_media_profile.c), renames every global those objects define into rci_media_vpx_lib_
+# (written from the symbols those objects define); the TAG covers it.
+[[pin]]
+name = "libvpx"
+version = "1.17.0"
+dir = "libvpx"
+released = "2026-08-21"
+spdx = "BSD-3-Clause"
+license = "libvpx/LICENSE"
+patents = "libvpx/PATENTS"
+url = "https://chromium.googlesource.com/webm/libvpx"
+mirror = "https://github.com/webmproject/libvpx"
+tag = "v1.17.0"
+tag_object = "82615ff0733cd4063838c352bc2e2ab225f37ade"
+commit = "6df3ec34557879fff673706f4a1d9fbd0f3a6f0e"
+configure = """--target=generic-gnu --disable-vp8-encoder --disable-vp9-encoder --enable-vp8-decoder \
+--enable-vp9-decoder --disable-examples --disable-tools --disable-docs --disable-unit-tests --enable-multithread \
+--disable-webm-io --disable-libyuv --disable-postproc --disable-vp9-postproc --disable-vp9-highbitdepth \
+--size-limit=8192x8192"""
+
+[[pin.files]]
+file = "libvpx/AUTHORS"
+size = 9579
+sha256 = "8a98b560e5314713550e6d3ba2d8acf3ef54dfc870fc448bef08a7c57648a0bd"
+
+[[pin.files]]
+file = "libvpx/LICENSE"
+size = 1537
+sha256 = "8267348d5af1262c11d1a08de2f5afc77457755f1ac658627dd9acf71011d615"
+
+[[pin.files]]
+file = "libvpx/PATENTS"
+size = 1436
+sha256 = "cc3273e0694ea5896145e0677699b53471b03ea43021ddc50e7923fbb9f5023c"
+
+[[pin.files]]
+file = "libvpx/vp8/common/alloccommon.c"
+size = 5405
+sha256 = "ffe1516905c9f7838a37f49ecc6eac46d2d40cd52b7e9a1b1d0cf620f44b1c82"
+
+[[pin.files]]
+file = "libvpx/vp8/common/alloccommon.h"
+size = 880
+sha256 = "137108154da895b25c8b21d3ad33470356b783aac7d9fbcd7ff3118661a09e94"
+
+[[pin.files]]
+file = "libvpx/vp8/common/blockd.h"
+size = 8581
+sha256 = "63bf20f34fadbd989596fde3bcbbeafa2f804a7084f375679592dee6e7aa6c7e"
+
+[[pin.files]]
+file = "libvpx/vp8/common/coefupdateprobs.h"
+size = 8725
+sha256 = "4e3e4cb5df8292bcd6ff49a317dadeaab4b5c53be6665e2ac82377424161e981"
+
+[[pin.files]]
+file = "libvpx/vp8/common/common.h"
+size = 1456
+sha256 = "d35b64bfe277f52082aad028be7653bada4841329e02f0d3b4db53624569af76"
+
+[[pin.files]]
+file = "libvpx/vp8/common/default_coef_probs.h"
+size = 8518
+sha256 = "a3aab021e2a4524f530205eae1463aa861cef0108c77770ba85050e1f94bde4a"
+
+[[pin.files]]
+file = "libvpx/vp8/common/dequantize.c"
+size = 972
+sha256 = "1c6fcef0275aa7680718789cd34c57aed6bfd453cfccd7b0cc2bba7068464626"
+
+[[pin.files]]
+file = "libvpx/vp8/common/entropy.c"
+size = 5575
+sha256 = "b678063f72e2a153d11b47502c9c4d9ec63d99ae80d7d610b445277658022eb2"
+
+[[pin.files]]
+file = "libvpx/vp8/common/entropy.h"
+size = 3990
+sha256 = "3cec64b7018cd9a7aeccaca07ff747981e616c7f3de8407cec56b852c33f632a"
+
+[[pin.files]]
+file = "libvpx/vp8/common/entropymode.c"
+size = 3666
+sha256 = "a8b1d914c9ec1e75e823cc8eb9444e6e20fd754ed70cb6851220c20e4940ef2f"
+
+[[pin.files]]
+file = "libvpx/vp8/common/entropymode.h"
+size = 2974
+sha256 = "69d990d690b11465ffc8010b950367a3f9eb0d9af2eab91b974d13636bab003e"
+
+[[pin.files]]
+file = "libvpx/vp8/common/entropymv.c"
+size = 1443
+sha256 = "4f03678d718fe592dabdab9e151e8efed322e6ac10e43f410f93eaae76bbec4c"
+
+[[pin.files]]
+file = "libvpx/vp8/common/entropymv.h"
+size = 1573
+sha256 = "fb13e5ca70886b46b2a32dfb2261a91410b8e4c13560871502261dcae6e027f7"
+
+[[pin.files]]
+file = "libvpx/vp8/common/extend.c"
+size = 5550
+sha256 = "01d8804c05237657eead97b6e98820063e4c230a06ec6d9b672faf9ed6dd1a0d"
+
+[[pin.files]]
+file = "libvpx/vp8/common/extend.h"
+size = 1097
+sha256 = "caeaf86f485f71015b05dd5787398393dc72c1942d60fc78dd9b0671d067deb5"
+
+[[pin.files]]
+file = "libvpx/vp8/common/filter.c"
+size = 14534
+sha256 = "6bfa6b03201d825731401cde4a2145df9f9af83a295be14b3503cf336e947dc3"
+
+[[pin.files]]
+file = "libvpx/vp8/common/filter.h"
+size = 852
+sha256 = "a563876cb35c94c4921cbc1081f7cabfe15eb73f10c7e8434db4e0f376423988"
+
+[[pin.files]]
+file = "libvpx/vp8/common/findnearmv.c"
+size = 5484
+sha256 = "80231cfb34c69ff7f7a6ce7a77386e74c90085344ed2b4579f3eeec9140bc49f"
+
+[[pin.files]]
+file = "libvpx/vp8/common/findnearmv.h"
+size = 5198
+sha256 = "f081103e72a85be09df98e70bbc102275433aaeddf90724d7b030669862dabf2"
+
+[[pin.files]]
+file = "libvpx/vp8/common/generic/systemdependent.c"
+size = 1720
+sha256 = "e529e9dcbe9bf110385eb1b646796778e8a3e1ad6440209db5c1b8bf072f4f80"
+
+[[pin.files]]
+file = "libvpx/vp8/common/header.h"
+size = 1120
+sha256 = "49642c90a99f2d33ab8a9aca7d33db861137422fe8b51b4582ec645d4cd91cf9"
+
+[[pin.files]]
+file = "libvpx/vp8/common/idct_blk.c"
+size = 1902
+sha256 = "a3ac9af0931ad1786a079f4d84699d21e305d671ae317ddd9bd05c209bd13bb2"
+
+[[pin.files]]
+file = "libvpx/vp8/common/idctllm.c"
+size = 4257
+sha256 = "a6833e959660a6496672ff7d4ba603f57a8eae4379247a9f40c14fc898f656e4"
+
+[[pin.files]]
+file = "libvpx/vp8/common/invtrans.h"
+size = 1590
+sha256 = "6465cf1d36fb06a114f096e408ff4d7283e6a704f996ebfa5375bdea0f79eacb"
+
+[[pin.files]]
+file = "libvpx/vp8/common/loopfilter.h"
+size = 3610
+sha256 = "113cc38a41503434075d9ec4e936d1739cc12985c50c7650a7f608905692cff8"
+
+[[pin.files]]
+file = "libvpx/vp8/common/loopfilter_filters.c"
+size = 14200
+sha256 = "279786a3f0563986507274e5ac91132852bd620d7ed4a8f2db92039b5c6da4f9"
+
+[[pin.files]]
+file = "libvpx/vp8/common/mbpitch.c"
+size = 1535
+sha256 = "56c4ecb675675641fd6ce26a60418841bd52f7b79106e09390c2ae074ef75d29"
+
+[[pin.files]]
+file = "libvpx/vp8/common/modecont.c"
+size = 686
+sha256 = "e894dbd079305db82cd029bce46032a102970f4521700f4a6f7cf2d2b7d846bf"
+
+[[pin.files]]
+file = "libvpx/vp8/common/modecont.h"
+size = 648
+sha256 = "9fe20879395536d1c0df10667e1dbe08aa95fd20ed3306bfc1bfb5b57fce7ccf"
+
+[[pin.files]]
+file = "libvpx/vp8/common/mv.h"
+size = 782
+sha256 = "0f1707fd0c3fd51da85df352ada7d8438aa0d3d11e5e008b12be7663225ef305"
+
+[[pin.files]]
+file = "libvpx/vp8/common/onyxc_int.h"
+size = 4457
+sha256 = "94b6db61c954bf9153f1c4558162807402a87944b168f2d784268e50391424cd"
+
+[[pin.files]]
+file = "libvpx/vp8/common/onyxd.h"
+size = 1838
+sha256 = "51bd32717612b3de56eddf740421ce66d8a4c49539e9131d4f6999d2a4102b8c"
+
+[[pin.files]]
+file = "libvpx/vp8/common/ppflags.h"
+size = 948
+sha256 = "6a2634d459e104534c8a72c14cd32da5aafb657798dc8a01965afd871cc1af94"
+
+[[pin.files]]
+file = "libvpx/vp8/common/quant_common.c"
+size = 3411
+sha256 = "fc8471698f061e5dcb9e7caef0df3bceec9921ec3aada2e1dc4c3348a5d7e8f2"
+
+[[pin.files]]
+file = "libvpx/vp8/common/quant_common.h"
+size = 966
+sha256 = "a1cf144ce2e77ac9a6ff233bf40c055bc520141bb9fce9205b364a489757354c"
+
+[[pin.files]]
+file = "libvpx/vp8/common/reconinter.c"
+size = 17473
+sha256 = "c84c43167981f89b966fef57abc58ec0e347f74916459a07a6f10c6d459291b0"
+
+[[pin.files]]
+file = "libvpx/vp8/common/reconinter.h"
+size = 1353
+sha256 = "382e2eef893d2eda4fc158e09353c13b23c8bfb4e0c725f0e7b1615fbf8bc7d9"
+
+[[pin.files]]
+file = "libvpx/vp8/common/reconintra.c"
+size = 3382
+sha256 = "3a14f08fc0674ccfa092043fdcf5804ae7dbc8fcd5e393fbd25afc5dbe3b1e9a"
+
+[[pin.files]]
+file = "libvpx/vp8/common/reconintra.h"
+size = 1174
+sha256 = "c2e1287bc2e905aabf9abca4e391a2d721d01a88678686577f71b5015608f0f0"
+
+[[pin.files]]
+file = "libvpx/vp8/common/reconintra4x4.c"
+size = 2508
+sha256 = "7346991d8bd1ba071d8b941f55ca64e2fbac82eea5198822a3a063fa3915bae0"
+
+[[pin.files]]
+file = "libvpx/vp8/common/reconintra4x4.h"
+size = 1580
+sha256 = "4ab3982df760609efa59e776087cda37d799b2a1598373abe8b38e53c540c65b"
+
+[[pin.files]]
+file = "libvpx/vp8/common/rtcd.c"
+size = 560
+sha256 = "c6f2f738e6d9006d33c3a210ddd75388c56741c7c8d86554f2a20d6a6b89976b"
+
+[[pin.files]]
+file = "libvpx/vp8/common/setupintrarecon.c"
+size = 1400
+sha256 = "fd4fb95e858fbdd053fb6771ce274ccf0104f492a5687d6e84f8e249c5bffffb"
+
+[[pin.files]]
+file = "libvpx/vp8/common/setupintrarecon.h"
+size = 1321
+sha256 = "47c8291bee541ec8b6e428ed7f8b86331de5aa8ec9cc31961d0ea86f4a3d4a2c"
+
+[[pin.files]]
+file = "libvpx/vp8/common/swapyv12buffer.h"
+size = 775
+sha256 = "208bc3c7de6f0d0b2c17563443bd2f4d1af8aac7afb048790856e5685df364e7"
+
+[[pin.files]]
+file = "libvpx/vp8/common/systemdependent.h"
+size = 724
+sha256 = "a72a111c4853315209250ce8f0e25b091b62efe9b6d2c3d17903acbae82f5d66"
+
+[[pin.files]]
+file = "libvpx/vp8/common/threading.h"
+size = 2910
+sha256 = "03cd2866bb02a8a9af9a979196a4d15e20f6b4bcbd0406bc306742a265378e74"
+
+[[pin.files]]
+file = "libvpx/vp8/common/treecoder.h"
+size = 3033
+sha256 = "bb478e554f554078a2c41400694be5eae022fb9163e2cd72a091720eba056f24"
+
+[[pin.files]]
+file = "libvpx/vp8/common/vp8_entropymodedata.h"
+size = 7404
+sha256 = "6d0ea636a3242aada520d72cc17086700cbed6698508c3dcbd407e3821d506f1"
+
+[[pin.files]]
+file = "libvpx/vp8/common/vp8_loopfilter.c"
+size = 18940
+sha256 = "85e3a09c7ab53a38f78db870f06de44abde1ce0553d8245fab51a27cf10e3a83"
+
+[[pin.files]]
+file = "libvpx/vp8/decoder/dboolhuff.c"
+size = 2211
+sha256 = "a4adbe494cbf7a75c3c6743deeb8ffc99e605c5b21a23f76a5871c27dbc1fe12"
+
+[[pin.files]]
+file = "libvpx/vp8/decoder/dboolhuff.h"
+size = 3616
+sha256 = "dd08337dc4178f3da7421c032bc7fea51268c01fcea5a11d77268464627c19b5"
+
+[[pin.files]]
+file = "libvpx/vp8/decoder/decodeframe.c"
+size = 41168
+sha256 = "ba41b8c0abc7be912cffe7c6463066613bebfb2cc0aca39308aed0304aee4e10"
+
+[[pin.files]]
+file = "libvpx/vp8/decoder/decodemv.c"
+size = 17644
+sha256 = "5423431b7d6913f30e41f41e1db7b7e284b04e99736d22ffbdb80e715b0e267c"
+
+[[pin.files]]
+file = "libvpx/vp8/decoder/decodemv.h"
+size = 672
+sha256 = "e336b9252f71dffd538782524a9889891b9985bba38102a614b166dc826f88eb"
+
+[[pin.files]]
+file = "libvpx/vp8/decoder/decoderthreading.h"
+size = 959
+sha256 = "d0458de7c9c09a6d4bcadd535e35c263def08e0fb224cc8149601eff3870a910"
+
+[[pin.files]]
+file = "libvpx/vp8/decoder/detokenize.c"
+size = 5808
+sha256 = "0d0680c1ce295cd780b1f973b4eab6cfd0144c3afc8a53555faf79afc4903b41"
+
+[[pin.files]]
+file = "libvpx/vp8/decoder/detokenize.h"
+size = 743
+sha256 = "3ecc6e20a9c26fa4bc3035ea0a34ceabf97db63e5998c5635e44e067616c56a2"
+
+[[pin.files]]
+file = "libvpx/vp8/decoder/onyxd_if.c"
+size = 12987
+sha256 = "f97f28f0ce91b342ca16aecb4dcd29b3dfd1169dda075c5ad634eb04ac4451d6"
+
+[[pin.files]]
+file = "libvpx/vp8/decoder/onyxd_int.h"
+size = 3504
+sha256 = "c993d6cfff6c085fae6ac20681352e7c5af4a09118b2d0403305a0f2782c1cba"
+
+[[pin.files]]
+file = "libvpx/vp8/decoder/threading.c"
+size = 31992
+sha256 = "2b2d7c3fa04bcd8570c808838de9c1ebb0e1309e9996d43d3d4de1007fdd2e9b"
+
+[[pin.files]]
+file = "libvpx/vp8/decoder/treereader.h"
+size = 1162
+sha256 = "b5b8227e322c342ff224a432f1c6da7f62b16c68349f21931c08371ece4545f4"
+
+[[pin.files]]
+file = "libvpx/vp8/vp8_dx_iface.c"
+size = 24035
+sha256 = "e643c9241cc5aa5b5bca39771106dc13d3f85950a0f72ca009c6adcbec0a2a13"
+
+[[pin.files]]
+file = "libvpx/vp8_rtcd.h"
+generated = true
+size = 5737
+sha256 = "a8946e98d78f2286d75bdaf4aa289e103538489dd4358efb495409732b052641"
+
+[[pin.files]]
+file = "libvpx/vp9/common/vp9_alloccommon.c"
+size = 5990
+sha256 = "3e59e9e63403ac83b279eb49c9ac04bb8cbe0dea5ad7296142822916f17c0909"
+
+[[pin.files]]
+file = "libvpx/vp9/common/vp9_alloccommon.h"
+size = 1584
+sha256 = "4434598d809f16a187f9b08bff75406c4f461717cea2866ce8e7f1873274bf16"
+
+[[pin.files]]
+file = "libvpx/vp9/common/vp9_blockd.c"
+size = 5009
+sha256 = "9693f43fb88ec5706e2f18dac74a434a60e75db67742ebf0f9088718d5de834d"
+
+[[pin.files]]
+file = "libvpx/vp9/common/vp9_blockd.h"
+size = 9621
+sha256 = "a3628f60842999fc7165b0dc045529734c7cc98609142582d8eda6434b9f059d"
+
+[[pin.files]]
+file = "libvpx/vp9/common/vp9_common.h"
+size = 1809
+sha256 = "43f1f24ab723fb3eeb4fa35111ba98c423cd05b083c878d35536a37a84076377"
+
+[[pin.files]]
+file = "libvpx/vp9/common/vp9_common_data.c"
+size = 10764
+sha256 = "de3b11445ddab6e6704f161c2c55cac9931ee565b45c7f79114604a947c59599"
+
+[[pin.files]]
+file = "libvpx/vp9/common/vp9_common_data.h"
+size = 1816
+sha256 = "c7f7dfb97b9f8db4d3ef41cd4ba143c411674d87cde44bfe1b1961771638be3a"
+
+[[pin.files]]
+file = "libvpx/vp9/common/vp9_entropy.c"
+size = 36252
+sha256 = "d6084c983bd9848bb19a32ef87305e822873815e1ea3a30e158b6e1a489519a1"
+
+[[pin.files]]
+file = "libvpx/vp9/common/vp9_entropy.h"
+size = 7448
+sha256 = "8c83251171ea2490555971216e1d465f442e93d869f3ba6209d2fa5f5a942f3c"
+
+[[pin.files]]
+file = "libvpx/vp9/common/vp9_entropymode.c"
+size = 21347
+sha256 = "0cb4940de5b9add383387c749c4c3f4bf13618782e0fe89677c8333d45b7e1e3"
+
+[[pin.files]]
+file = "libvpx/vp9/common/vp9_entropymode.h"
+size = 4070
+sha256 = "d3e9ac5ebb30f151b4ee71d4c85f23e30ecb596317dc76c4a6c66236fb83a5da"
+
+[[pin.files]]
+file = "libvpx/vp9/common/vp9_entropymv.c"
+size = 8734
+sha256 = "9ec4c5ac7c35e9a7360055d91486a9d3e8e12050f8bcbf6e72bba8d1c749fee1"
+
+[[pin.files]]
+file = "libvpx/vp9/common/vp9_entropymv.h"
+size = 4005
+sha256 = "f61e4944fc60afd2be83e92674aacfa91def3d972e9c758ae35ef6ecd29cb2be"
+
+[[pin.files]]
+file = "libvpx/vp9/common/vp9_enums.h"
+size = 4228
+sha256 = "49409e547d24b817deadb5f5bb194758f6df63b4cef969ad2faf868e2adeab69"
+
+[[pin.files]]
+file = "libvpx/vp9/common/vp9_filter.c"
+size = 4086
+sha256 = "d4097ff80fcc12bbaf395e13d6323ab7854e98cb05eb8a90c31314e77224e19f"
+
+[[pin.files]]
+file = "libvpx/vp9/common/vp9_filter.h"
+size = 1233
+sha256 = "8452c18994f9774583b45f1e7c21e9fb7a21a74eb9d3a3112979fbc885d0b80d"
+
+[[pin.files]]
+file = "libvpx/vp9/common/vp9_frame_buffers.c"
+size = 2636
+sha256 = "5cc3b72fb8186839cbfa8c023a240147fb681879682b87879cc7c5fa06dd6594"
+
+[[pin.files]]
+file = "libvpx/vp9/common/vp9_frame_buffers.h"
+size = 1755
+sha256 = "0206619b21b33d95b280a0ea1c7c960ce30e3b3f9d35a9eee1cd2b9a8700b357"
+
+[[pin.files]]
+file = "libvpx/vp9/common/vp9_idct.c"
+size = 12804
+sha256 = "e0a49272ea0870d8933820d4cc00ca2f78e2016af79b7dff94790896a278c693"
+
+[[pin.files]]
+file = "libvpx/vp9/common/vp9_idct.h"
+size = 3239
+sha256 = "289d7dfc3f1d189c291b09e2005a21e883b8756d231b52250522226c3ff3a5ee"
+
+[[pin.files]]
+file = "libvpx/vp9/common/vp9_loopfilter.c"
+size = 60680
+sha256 = "5ffec54badf3b1a9b8626560f91b66e8a32be7b8001f36424e6d514bf48abd62"
+
+[[pin.files]]
+file = "libvpx/vp9/common/vp9_loopfilter.h"
+size = 5470
+sha256 = "5b48890c3ba0699ad886f7dcd01db0a86ea5d0e7e9f53ba3315793df6c118f0e"
+
+[[pin.files]]
+file = "libvpx/vp9/common/vp9_mv.h"
+size = 1350
+sha256 = "7bff936cc11aa886a9f1ad8407c3bcca275399b8dc7d399a4a1705017c522ef1"
+
+[[pin.files]]
+file = "libvpx/vp9/common/vp9_mvref_common.h"
+size = 9775
+sha256 = "dbe074fd92d93418275a5169f42fef7a1044559b55f2f4bcd2fe1edb96004131"
+
+[[pin.files]]
+file = "libvpx/vp9/common/vp9_onyxc_int.h"
+size = 14400
+sha256 = "2c44a00c9c9f22e83be4835395a6692d30be18b049701bce49e2581289e0b060"
+
+[[pin.files]]
+file = "libvpx/vp9/common/vp9_ppflags.h"
+size = 851
+sha256 = "f0d5cb8ddca7ff4a1c9c541f082a60738feaf0a42d302eb2862e5f72b8c0ef8d"
+
+[[pin.files]]
+file = "libvpx/vp9/common/vp9_pred_common.c"
+size = 12821
+sha256 = "f95811f5ba9fd7c31fa18d564c19916d230371996aa76625a67e316f2e4bfb86"
+
+[[pin.files]]
+file = "libvpx/vp9/common/vp9_pred_common.h"
+size = 7615
+sha256 = "da628da570d8c9d221204d25bd89eba75fa6b1b26a1fabf2703f762ef0df07fc"
+
+[[pin.files]]
+file = "libvpx/vp9/common/vp9_quant_common.c"
+size = 12192
+sha256 = "da0d83da3036bd6d064030aa381583dbe21b1af7585fc09a72e37190b5be050a"
+
+[[pin.files]]
+file = "libvpx/vp9/common/vp9_quant_common.h"
+size = 1040
+sha256 = "7fa79f1384eadda4dce37c6fcac107aaec53dbbf1a16439e2bc352dfd91fdc6a"
+
+[[pin.files]]
+file = "libvpx/vp9/common/vp9_reconinter.c"
+size = 12372
+sha256 = "ac745ced3a941b3ef57747ed83e29d38e13b16ed39f317924c32887dffd18b28"
+
+[[pin.files]]
+file = "libvpx/vp9/common/vp9_reconinter.h"
+size = 4599
+sha256 = "181d17be26170511e2ac0de07cb6d9400179c23163fae478074ae1932378954b"
+
+[[pin.files]]
+file = "libvpx/vp9/common/vp9_reconintra.c"
+size = 15507
+sha256 = "108a51affbdcb30a7c6ee536bdedb0bcfd986ea83513bc416630fe30b1670238"
+
+[[pin.files]]
+file = "libvpx/vp9/common/vp9_reconintra.h"
+size = 1015
+sha256 = "fcc73b90d77486d6685d51f6117782dab82328d8f4f10a543f022bf16fa6b87f"
+
+[[pin.files]]
+file = "libvpx/vp9/common/vp9_rtcd.c"
+size = 560
+sha256 = "aa08911047f2e075ca1d356dc20196e07f1a072393076a0f4abb0870f481111e"
+
+[[pin.files]]
+file = "libvpx/vp9/common/vp9_scale.c"
+size = 7113
+sha256 = "201551b8d0078b21b2b11b4e6f1eba221c70965f9a0c5bb69b90bd5ece568c5e"
+
+[[pin.files]]
+file = "libvpx/vp9/common/vp9_scale.h"
+size = 2372
+sha256 = "f1c4560a1b96d31e0b8c7235515b8bc3fabbd2f4d45fd810e50b947701ad3db0"
+
+[[pin.files]]
+file = "libvpx/vp9/common/vp9_scan.c"
+size = 48194
+sha256 = "010507b0c768b108385bdea7f312220f222b43ff6581f08cde4662176893e5c3"
+
+[[pin.files]]
+file = "libvpx/vp9/common/vp9_scan.h"
+size = 1997
+sha256 = "7ff077d6a1881bd03c969fc66a4efd3212826d0598d32385f52a446fa656439c"
+
+[[pin.files]]
+file = "libvpx/vp9/common/vp9_seg_common.c"
+size = 2176
+sha256 = "04769ba128cdb514363d9ba501091541fdf63830b5e71d92659e36ab49ad4b82"
+
+[[pin.files]]
+file = "libvpx/vp9/common/vp9_seg_common.h"
+size = 2641
+sha256 = "d70d52cf7ff456d3b8c34d681983e28c8077b577ce16b1215ab6e3f9f049c3a9"
+
+[[pin.files]]
+file = "libvpx/vp9/common/vp9_thread_common.c"
+size = 19732
+sha256 = "09de6e576669a075850f213b94588cac7f3023904a1270351b0ec3449117594e"
+
+[[pin.files]]
+file = "libvpx/vp9/common/vp9_thread_common.h"
+size = 2890
+sha256 = "2f958f8e33140566c176412f8179595d2c52ae52b57766eb22cd60270a4273f8"
+
+[[pin.files]]
+file = "libvpx/vp9/common/vp9_tile_common.c"
+size = 2137
+sha256 = "f9f229f5b92ad51c671dbfe6be7cf026e61fc2d2f4e9f3aca21b30f22f73af8c"
+
+[[pin.files]]
+file = "libvpx/vp9/common/vp9_tile_common.h"
+size = 1244
+sha256 = "7cf3c2a2172b9a3e5fba2d23fead32503c7a58a7a83030b07371bb02d1bcb708"
+
+[[pin.files]]
+file = "libvpx/vp9/decoder/vp9_decodeframe.c"
+size = 115254
+sha256 = "796aac2d4515aa4647dbd5aa59f370d5c6d7a7295eda26803ae74a0475333fd2"
+
+[[pin.files]]
+file = "libvpx/vp9/decoder/vp9_decodeframe.h"
+size = 1095
+sha256 = "69459b8806ad4e1bed0004d3739de909d0b9503f4dc8d0923b92066768d5c67b"
+
+[[pin.files]]
+file = "libvpx/vp9/decoder/vp9_decodemv.c"
+size = 31989
+sha256 = "17eb975fc28e2691f3ba39ecaa75890a7ba65a9f10e1bee93081013ef0a8ac62"
+
+[[pin.files]]
+file = "libvpx/vp9/decoder/vp9_decodemv.h"
+size = 830
+sha256 = "32646b69fd85bccda3b77a373ad96ba8507c7f4aafe1630f9010b5212287f183"
+
+[[pin.files]]
+file = "libvpx/vp9/decoder/vp9_decoder.c"
+size = 19785
+sha256 = "4543211ee73906da678d882f256f14766bef8835ea9d96b7d3a24510705d3d33"
+
+[[pin.files]]
+file = "libvpx/vp9/decoder/vp9_decoder.h"
+size = 5926
+sha256 = "58b2d06e7e17adf74a27e5b75edb2a9da76fef2626bbf26f8c877717a01aec4a"
+
+[[pin.files]]
+file = "libvpx/vp9/decoder/vp9_detokenize.c"
+size = 11132
+sha256 = "d1c752bb754750b732c6b6bcbf2b6508ba249b153e0c405e690656abac87e748"
+
+[[pin.files]]
+file = "libvpx/vp9/decoder/vp9_detokenize.h"
+size = 882
+sha256 = "8291cb1747dac83008b6121ea12834796f3201125f9f86c030d86fa0809c86f8"
+
+[[pin.files]]
+file = "libvpx/vp9/decoder/vp9_dsubexp.c"
+size = 2964
+sha256 = "da858e014dbea6c19e046577d96ecdbe8f1ec54710b7778b3fe951f484f38ee1"
+
+[[pin.files]]
+file = "libvpx/vp9/decoder/vp9_dsubexp.h"
+size = 705
+sha256 = "6fd426372f340d9b2ab74aef17776cab8199757ac036c9b4a1b831bff5b5bc73"
+
+[[pin.files]]
+file = "libvpx/vp9/decoder/vp9_job_queue.c"
+size = 3160
+sha256 = "88abab5fab482d6c3e44c6c2df272762fc1c70638ed198bcfb07cdef7825a34d"
+
+[[pin.files]]
+file = "libvpx/vp9/decoder/vp9_job_queue.h"
+size = 1398
+sha256 = "79e7a4a9d5035cc733c5a588616c3e7661d98f8c9d4926a8b25bdbb9cecfb651"
+
+[[pin.files]]
+file = "libvpx/vp9/vp9_dx_iface.c"
+size = 24278
+sha256 = "0a32980632a37588a85cf026b8246e06927c796a80347c8aa9adb22f8c33eecf"
+
+[[pin.files]]
+file = "libvpx/vp9/vp9_dx_iface.h"
+size = 1545
+sha256 = "a82c2b7a4a1a5b64fb477361c351775f7a86a97739e30075fc2ba0d7e17c489c"
+
+[[pin.files]]
+file = "libvpx/vp9/vp9_iface_common.c"
+size = 5017
+sha256 = "90607baf56e31f2afd68afbf86b684a7180470b92eec79fe44234e715a477016"
+
+[[pin.files]]
+file = "libvpx/vp9/vp9_iface_common.h"
+size = 1281
+sha256 = "50f870c131d983639525f98e9208cc6648001698e784e4ba373f3c04645ba1ec"
+
+[[pin.files]]
+file = "libvpx/vp9_rtcd.h"
+generated = true
+size = 1671
+sha256 = "8ad9b1825e65c7caf3d636068bf463918ed8d9483635cee7cf332abcfa528f2a"
+
+[[pin.files]]
+file = "libvpx/vpx/internal/vpx_codec_internal.h"
+size = 19494
+sha256 = "592237daf5d4d6982731a7a4a6c73d10760825c29f5c3755720bf9985c116f7f"
+
+[[pin.files]]
+file = "libvpx/vpx/src/vpx_codec.c"
+size = 3835
+sha256 = "aa4a30998250101bfdfcf9f4def2ac9cc908b69224a0fae802d54456fb4a732b"
+
+[[pin.files]]
+file = "libvpx/vpx/src/vpx_decoder.c"
+size = 5940
+sha256 = "efedaa74f48c6d59e582bcb4ffbb49d3fc34970720febf5d4bb98614f3c8e916"
+
+[[pin.files]]
+file = "libvpx/vpx/vp8.h"
+size = 4248
+sha256 = "8bd4f03ef5771d7f08b103733f09bd5fdb665c0b1a0f039a5ca1b9c4fbd0bdb8"
+
+[[pin.files]]
+file = "libvpx/vpx/vp8dx.h"
+size = 7398
+sha256 = "f3d98bda5d043879b8e37f01ee2fcfe9419461367a277c34eaef7811680f4021"
+
+[[pin.files]]
+file = "libvpx/vpx/vpx_codec.h"
+size = 16104
+sha256 = "713a1a1a82968c084f5aab4e7026891001e67b98af420ca3896c7fbdcb0c1890"
+
+[[pin.files]]
+file = "libvpx/vpx/vpx_decoder.h"
+size = 15377
+sha256 = "aa784c3f27af14aa7a9e4d14386aee523eb3e50f957194e5c690bb83855eff43"
+
+[[pin.files]]
+file = "libvpx/vpx/vpx_encoder.h"
+size = 45465
+sha256 = "16f5d79236eaccec01460d744a5cb2f8ee132af03b31bc46d26a44263159c421"
+
+[[pin.files]]
+file = "libvpx/vpx/vpx_ext_ratectrl.h"
+size = 19333
+sha256 = "9e76374c929ff0d93820af19944934a0539feaaad8a779c8d91dd199bf1fe854"
+
+[[pin.files]]
+file = "libvpx/vpx/vpx_frame_buffer.h"
+size = 3206
+sha256 = "edc0bc4626e4c93e668a9d1ed6c58316df905c2187384480d58f47c44acfcb22"
+
+[[pin.files]]
+file = "libvpx/vpx/vpx_image.h"
+size = 10583
+sha256 = "64266026294553542b6a894d1aa339dc6348aec87465cea48e6eb4043e067aae"
+
+[[pin.files]]
+file = "libvpx/vpx/vpx_integer.h"
+size = 1203
+sha256 = "531c1ea958f1ad7e29cc95dd7bb1dc7ee4b2cde00c099883f05924e2e5930eb1"
+
+[[pin.files]]
+file = "libvpx/vpx/vpx_tpl.h"
+size = 2551
+sha256 = "171e470f7118595b1467a9181edbae879a5a1ac48cdc3b2d01edd84ccf699243"
+
+[[pin.files]]
+file = "libvpx/vpx_config.h"
+generated = true
+size = 3279
+sha256 = "86d32b08916d1701347d0588adf0d47064500fff51ec955e11be95bbc993c6cb"
+
+[[pin.files]]
+file = "libvpx/vpx_dsp/bitreader.c"
+size = 3074
+sha256 = "2e89f06a6ab348948e52953a5386724824ca6e5eabdb7837e13e30667565a868"
+
+[[pin.files]]
+file = "libvpx/vpx_dsp/bitreader.h"
+size = 4547
+sha256 = "3473a2156222b8b789cf8aff174533536586ec0ac7201b69b57694456541c91f"
+
+[[pin.files]]
+file = "libvpx/vpx_dsp/bitreader_buffer.c"
+size = 1471
+sha256 = "8bcb377dafd1a91d9e536e5024e4a03925a1618c34f75064869901643b8fafbb"
+
+[[pin.files]]
+file = "libvpx/vpx_dsp/bitreader_buffer.h"
+size = 1240
+sha256 = "f77467188a3d972b3e1b5922c813e0479b441eb90ba264d83bbc1a3ce0345867"
+
+[[pin.files]]
+file = "libvpx/vpx_dsp/intrapred.c"
+size = 28673
+sha256 = "a12832eeaf5c74b765d001f278f02698b435baad64b486522ab80de269968cea"
+
+[[pin.files]]
+file = "libvpx/vpx_dsp/inv_txfm.c"
+size = 99069
+sha256 = "847951b1decc939d5b72d60c49fe976709bb0832a10e0ad40609fb47164867c7"
+
+[[pin.files]]
+file = "libvpx/vpx_dsp/inv_txfm.h"
+size = 4883
+sha256 = "272c4a0c7d649481a2876076f037192254054e915aa7f692849f6f12988bab83"
+
+[[pin.files]]
+file = "libvpx/vpx_dsp/loopfilter.c"
+size = 32042
+sha256 = "6e4225b7168bb9f96c828d1689a874877f5b2f3dc314b484e10f775c84b17791"
+
+[[pin.files]]
+file = "libvpx/vpx_dsp/prob.c"
+size = 2287
+sha256 = "fe4239ef8ffd2e0f36884e963c20bb87337d39b87a84c5b580372a9f1b348346"
+
+[[pin.files]]
+file = "libvpx/vpx_dsp/prob.h"
+size = 3394
+sha256 = "7c178c1ba1efc37ed138bde298c9c370e52f9c408e5754b637592272c4b23368"
+
+[[pin.files]]
+file = "libvpx/vpx_dsp/txfm_common.h"
+size = 2584
+sha256 = "159370639195bdab8c110b38ceb73019e68f7ee21a2f230207f15f69f5e06329"
+
+[[pin.files]]
+file = "libvpx/vpx_dsp/vpx_convolve.c"
+size = 21080
+sha256 = "3cabc454b003551d29349d27b4f484e458e2098f40bef6b9c8ac6b33758de42b"
+
+[[pin.files]]
+file = "libvpx/vpx_dsp/vpx_convolve.h"
+size = 1391
+sha256 = "c43aad525236c5f1f29d3af381ea7bf409cda6f5936962ee6109b71b5af753b4"
+
+[[pin.files]]
+file = "libvpx/vpx_dsp/vpx_dsp_common.h"
+size = 2858
+sha256 = "2c33e52935eefc7a2aa72ee04e2e235b25d64c7fa06ea51215ee2bcc6baf2893"
+
+[[pin.files]]
+file = "libvpx/vpx_dsp/vpx_dsp_rtcd.c"
+size = 568
+sha256 = "a35c2d8d291a86d0ab4b6b3b8e342c71d029461fe1a586332b907bd9256fc025"
+
+[[pin.files]]
+file = "libvpx/vpx_dsp/vpx_filter.h"
+size = 1081
+sha256 = "e61cb71e81ddccb763d342b3a859830a25aceb79bf1dd9c00748818febac7663"
+
+[[pin.files]]
+file = "libvpx/vpx_dsp_rtcd.h"
+generated = true
+size = 18057
+sha256 = "6aacab851cb8fdd5be02c5f402b50d857f6257ded6249bfc70f9507d8bc1a30b"
+
+[[pin.files]]
+file = "libvpx/vpx_mem/include/vpx_mem_intrnl.h"
+size = 1044
+sha256 = "32b6edc8651f0aaadca8364e994c2b99ea2d31d5dec9c4e992012088109f9a95"
+
+[[pin.files]]
+file = "libvpx/vpx_mem/vpx_mem.c"
+size = 2610
+sha256 = "6417e5f4f291bfbca66215bdc28064eb727667500c436ed06f903902804d3e86"
+
+[[pin.files]]
+file = "libvpx/vpx_mem/vpx_mem.h"
+size = 1185
+sha256 = "429e18c0fbe4254634ef1115375bd2a534e3234849bffd8e06972a11555cbe1b"
+
+[[pin.files]]
+file = "libvpx/vpx_ports/bitops.h"
+size = 2194
+sha256 = "df32e29c582ec5818ff2de0d5f8bd113d6c576629e3271f507b7e9a057cf0935"
+
+[[pin.files]]
+file = "libvpx/vpx_ports/compiler_attributes.h"
+size = 2630
+sha256 = "6e89e9bfcfda6f5f948ee90a4123e9d5b94cafe6eaee1c392c067bee22fcc67a"
+
+[[pin.files]]
+file = "libvpx/vpx_ports/mem.h"
+size = 1693
+sha256 = "157dcfcf32f7e16543d49f81de95ac77ae0cd093be3efcb7c657cbfe2aff8bed"
+
+[[pin.files]]
+file = "libvpx/vpx_ports/mem_ops.h"
+size = 6785
+sha256 = "ec1c28b46887e77517229ca186fec5650c57fc8c515b4646d24f64c9943bc45a"
+
+[[pin.files]]
+file = "libvpx/vpx_ports/mem_ops_aligned.h"
+size = 7220
+sha256 = "1e4ea4f57be7257be08c2f2f68aba2a8b53aa1d821cf064888ce88fb0a18b890"
+
+[[pin.files]]
+file = "libvpx/vpx_ports/system_state.h"
+size = 830
+sha256 = "54e50a15577b044f3f5c618dac64e6dd29ebcb48850456ac0ad8960e97e8ccf5"
+
+[[pin.files]]
+file = "libvpx/vpx_ports/vpx_once.h"
+size = 3453
+sha256 = "483f46db1243752050eea0fd7868a6ce577276f3ed0df626848c03d7b3fc3de4"
+
+[[pin.files]]
+file = "libvpx/vpx_ports/vpx_timer.h"
+size = 2882
+sha256 = "39e9ae80660bcb9383f5db5f1d4abaa88df0edea98536a0456f8beb8fa69079f"
+
+[[pin.files]]
+file = "libvpx/vpx_scale/generic/yv12config.c"
+size = 10854
+sha256 = "4b248ec01e4ec24194247379a3a9891b4f6d3ea024bb1c209ade86c514a92148"
+
+[[pin.files]]
+file = "libvpx/vpx_scale/generic/yv12extend.c"
+size = 10717
+sha256 = "d6b28db3b7fe03f04e291d69a993a4f01e6dc471613d9a72fc1e17a3de0d78af"
+
+[[pin.files]]
+file = "libvpx/vpx_scale/vpx_scale.h"
+size = 910
+sha256 = "84d82bb1e9382f6395b92575968330ef27f61a5d91bfd960bb38a93c94e69e68"
+
+[[pin.files]]
+file = "libvpx/vpx_scale/vpx_scale_rtcd.c"
+size = 572
+sha256 = "330eaaa366691301afbc155186cd16aa64d2d6c0d01d9e08c99ebd683c05c2ff"
+
+[[pin.files]]
+file = "libvpx/vpx_scale/yv12config.h"
+size = 3110
+sha256 = "1c1a7b9e4fc2e4accc1ad207ce2325491dcf1e27790deb3390ff1d5f8deadd5a"
+
+[[pin.files]]
+file = "libvpx/vpx_scale_rtcd.h"
+generated = true
+size = 3231
+sha256 = "5bd74357a41aea413e4b7f84b695eb3af094d794c112bcfbd614e505148d2a5f"
+
+[[pin.files]]
+file = "libvpx/vpx_util/endian_inl.h"
+size = 3634
+sha256 = "7e0974b960737dd162817c1f577a0146fa8fd0350255546e03fbbef65bf64af9"
+
+[[pin.files]]
+file = "libvpx/vpx_util/vpx_atomics.h"
+size = 4179
+sha256 = "e781f7b500908fae7dfa181c014158cdd7e966f0604b42445d306b9e6dd247fb"
+
+[[pin.files]]
+file = "libvpx/vpx_util/vpx_pthread.h"
+size = 4533
+sha256 = "c40569a5914d941ee890202c3c727075d12094ae2d485695e46efc988eecfabc"
+
+[[pin.files]]
+file = "libvpx/vpx_util/vpx_thread.c"
+size = 7665
+sha256 = "edf65676ab72769fdbee6961ab9f628dce36053f9602e1ba88e71245be4680a7"
+
+[[pin.files]]
+file = "libvpx/vpx_util/vpx_thread.h"
+size = 3945
+sha256 = "50ab8787f9c673101a39ccc2bb0783ddc0ba68cab2cea1a31f8fa01ef4e17824"
+
+[[pin.files]]
+file = "libvpx/vpx_version.h"
+generated = true
+size = 371
+sha256 = "d4b08cdef471aef5fd45879607fb590713c588e854cfb24cb9002219de2d79ce"
+
+# The license texts, from the same commits (LICENSES/; their blobs matched GitHub's too).
+
+# nestegg: the WebM demuxer of Linux's video player. Upstream tags no releases: the pin is the head
+# of its master branch on import, `committed` that commit's date (UTC). Its demuxer and public header only (no tests,
+# docs or build scripts) at their upstream paths under `dir`, each file's git blob id beside its sha256 (`git
+# hash-object` recomputes it). `url` is GitHub's archive of the commit (`tarball_sha256` measured on import): each
+# file matched the same path in it byte for byte.
+[[pin]]
+name = "nestegg"
+version = "767aab25013a"
+dir = "nestegg"
+committed = "2026-09-16"
+spdx = "ISC"
+license = "nestegg/LICENSE"
+url = "https://github.com/mozilla/nestegg/archive/767aab25013acefbdcc6d68a2a7a2c9081303e3f.tar.gz"
+tarball_size = 2025629
+tarball_sha256 = "bd597e86e5a7c00171aa56d914501e3f597ea46dbc7d432324e97da94a8a4b5e"
+commit = "767aab25013acefbdcc6d68a2a7a2c9081303e3f"
+
+[[pin.files]]
+file = "nestegg/LICENSE"
+blob = "a67984a61fd4181a601fd25bc32222ac9b334335"
+size = 732
+sha256 = "505ee8e018326f36bb4070f69c6eb3caa6079b8fb796cd53a8d1bb168337e5ae"
+
+[[pin.files]]
+file = "nestegg/include/nestegg/nestegg.h"
+blob = "78da401c862b41aaae19e8b181bbfd3d54b4ffc4"
+size = 28426
+sha256 = "854fc0bcab4c6c8d0cc0e340799f8fc3f38dbcdbdaac63a9ea88f2ae0a4dee05"
+
+[[pin.files]]
+file = "nestegg/src/nestegg.c"
+blob = "77964d27d549cdc320dd6bda0290aacdb6050930"
+size = 110108
+sha256 = "0c80f2e178530c335e431be1eb5ab853a4b789a914284c143e8dcbb6a0d90860"
+
+# libopus 1.6.1: the Opus decoder of WebM's audio, BSD-3-Clause under the royalty-free patent licenses
+# COPYING names (LICENSE_PLEASE_READ.txt lists every IETF IPR statement). Its DECODER alone, the floating-point build:
+# the 66 .c files of upstream's own source lists (opus_sources.mk, celt_sources.mk, silk_sources.mk) that a link of
+# the multistream decoder reaches, object by object, and the 50 headers they include, at their upstream paths under
+# `dir`; no encoder entry point, analysis, DNN (deep PLC, DRED, OSCE), SIMD, fixed-point or custom-modes source. `url`
+# is Xiph's release tarball, whose sha256 matched Xiph's own `checksums` list; every file matched it byte for byte
+# (but LICENSE_PLEASE_READ.txt, which the tarball does not carry), and every file's git blob id matched the tree of
+# `commit`, the commit of the signed tag `tag` (its tag object `tag_object`).
+[[pin]]
+name = "libopus"
+version = "1.6.1"
+dir = "opus"
+released = "2026-01-13"
+spdx = "BSD-3-Clause"
+license = "opus/COPYING"
+url = "https://downloads.xiph.org/releases/opus/opus-1.6.1.tar.gz"
+tarball_size = 10472813
+tarball_sha256 = "6ffcb593207be92584df15b32466ed64bbec99109f007c82205f0194572411a1"
+checksums = "https://downloads.xiph.org/releases/opus/SHA256SUMS.txt"
+repository = "https://github.com/xiph/opus"
+tag = "v1.6.1"
+tag_object = "a5d6c1b6f4e582df97390f9ac5c6e7c51cbffffe"
+commit = "22244de5a79bd1d6d623c32e72bf1954b56235be"
+
+[[pin.files]]
+file = "opus/AUTHORS"
+size = 239
+sha256 = "f9fd849e652219ce98e008303370b352d37663d0ffb27b8dc514ad93c9c7438b"
+
+[[pin.files]]
+file = "opus/COPYING"
+size = 1945
+sha256 = "01e1167d54a096d123cf6dfbbeb19587278845c6481d2d66d545669846079551"
+
+[[pin.files]]
+file = "opus/LICENSE_PLEASE_READ.txt"
+size = 703
+sha256 = "7efb4989e0cd1b256229bdf2f09300c5d14e35db0e7476bfb87fac243498273d"
+
+[[pin.files]]
+file = "opus/celt/_kiss_fft_guts.h"
+size = 6212
+sha256 = "c61749211e75ab6088ea19cf05e777645b8762ac8917b7ec92dc24f630b0c392"
+
+[[pin.files]]
+file = "opus/celt/arch.h"
+size = 12547
+sha256 = "6cd5b41be6d13e9300bb5eae18bf1ab739882f4db31e3a3a3d54c415c5b9c797"
+
+[[pin.files]]
+file = "opus/celt/bands.c"
+size = 61074
+sha256 = "fc7ddcc7a46135c2cd89016025e4b96d30e9b514565610115467405d78d63ec6"
+
+[[pin.files]]
+file = "opus/celt/bands.h"
+size = 5577
+sha256 = "2167a3fcca0789942d46cdc2f870d77d66d09ec1840ee1db8a508ae16126fad8"
+
+[[pin.files]]
+file = "opus/celt/celt.c"
+size = 11029
+sha256 = "d3c1b484c4d895bceda7c543534fc607bf4c6e2b1ca4b080dee8a5b8433a95d9"
+
+[[pin.files]]
+file = "opus/celt/celt.h"
+size = 8878
+sha256 = "1c2b136abe5af480d3a579742ebf099ea345622645c1852c151ca2817c92eb53"
+
+[[pin.files]]
+file = "opus/celt/celt_decoder.c"
+size = 61451
+sha256 = "a53393c70ae917d39229f34bce2c16ada535807e095cad00a4580aee48c9bfdb"
+
+[[pin.files]]
+file = "opus/celt/celt_lpc.c"
+size = 10753
+sha256 = "8c6eb20b52aa9d52a83453fd3e33372f2faf1791ea6cfcd8d9d294b005cd0801"
+
+[[pin.files]]
+file = "opus/celt/celt_lpc.h"
+size = 2240
+sha256 = "e10b2e2e610b16a2003d00599467dfed45d300726eb28d0934857ebe2dc822cf"
+
+[[pin.files]]
+file = "opus/celt/cpu_support.h"
+size = 2434
+sha256 = "02bf67720c974a87fa96aad556c4847acc3370ecd16a95170193724197bc9c0e"
+
+[[pin.files]]
+file = "opus/celt/cwrs.c"
+size = 28394
+sha256 = "6579428627c7cbdc5de0e977bd81559f1e75cc7dd620bcb29ef7b4770ae13e44"
+
+[[pin.files]]
+file = "opus/celt/cwrs.h"
+size = 1885
+sha256 = "7705be67d58e7fbdea384dde5f3c404ef814fbb8ecbfca61f731d11e8201bdc7"
+
+[[pin.files]]
+file = "opus/celt/ecintrin.h"
+size = 3679
+sha256 = "c1100f45bdf70d2243740a7891a5def54cf483b51d024a35ac915b630639b556"
+
+[[pin.files]]
+file = "opus/celt/entcode.c"
+size = 5700
+sha256 = "fb52778fb752126b6da6366d29d532ee98d66eb366a28e913562eb9520ba9208"
+
+[[pin.files]]
+file = "opus/celt/entcode.h"
+size = 5423
+sha256 = "97e7742ae4251b545326aadcc898635e90f22d5dc18fa63471c118b8bd79d1e8"
+
+[[pin.files]]
+file = "opus/celt/entdec.c"
+size = 8374
+sha256 = "f2d74695ceeb927210dcf76d653241ebdfd465a1c23128604640d218cdd93c38"
+
+[[pin.files]]
+file = "opus/celt/entdec.h"
+size = 5348
+sha256 = "31485453c516ad9be38a03b50a3c450fd5a9b7c7fad2d9e6c05357fd07efe0a9"
+
+[[pin.files]]
+file = "opus/celt/entenc.c"
+size = 9881
+sha256 = "56e0843479ae5db15696125ba6ac3d0a0c26fa8b677d4d6bd457686865408572"
+
+[[pin.files]]
+file = "opus/celt/entenc.h"
+size = 5905
+sha256 = "b54d50fa515e4cf2f4b5a5a7a99269b85e24aefb533dd55d407660d1105b5a01"
+
+[[pin.files]]
+file = "opus/celt/float_cast.h"
+size = 5955
+sha256 = "043f39a90f0dc86092dfa7a76916cb123d06084b16e984b7a2f6375dea42fbfc"
+
+[[pin.files]]
+file = "opus/celt/kiss_fft.c"
+size = 18531
+sha256 = "0ff3c57ce9dededbf9925338808223ee8e164b5847f2b320da49b11bac4024d0"
+
+[[pin.files]]
+file = "opus/celt/kiss_fft.h"
+size = 6754
+sha256 = "1f293823406831f90dea83170c9d8ca0161254ab2f5f932b4110e8c8e96927b7"
+
+[[pin.files]]
+file = "opus/celt/laplace.c"
+size = 6257
+sha256 = "6a33bdc5bf3a3350f51f92aafa281e4163fdffc88c9e7b0718f6eb770dc595e7"
+
+[[pin.files]]
+file = "opus/celt/laplace.h"
+size = 2349
+sha256 = "27102a1e7f24879c6871df971b7215b119d574bc25a3af9740c343d3b285ae82"
+
+[[pin.files]]
+file = "opus/celt/mathops.c"
+size = 11265
+sha256 = "25199450cc613fc9784add776204dc81d12478fde0d00c746fb1ac62ba85c10e"
+
+[[pin.files]]
+file = "opus/celt/mathops.h"
+size = 22889
+sha256 = "79bf06946bf6ab97e6eb933193bcc654d0a7503132044c22714d7cdcc22ba22f"
+
+[[pin.files]]
+file = "opus/celt/mdct.c"
+size = 12338
+sha256 = "8a21116be9b1332926586f8f44af0e1afd9bb7e8a65614683f972654a0668dcb"
+
+[[pin.files]]
+file = "opus/celt/mdct.h"
+size = 4771
+sha256 = "fe4d55da1aa03159403379a1cf9d6373da7b27ed0f1de63f8f726e9d9cffd41a"
+
+[[pin.files]]
+file = "opus/celt/mfrngcod.h"
+size = 2232
+sha256 = "5974c2341889a1c2e9775c2a21b3a55d4cbc1ebef90fe4412789aca4f4a19504"
+
+[[pin.files]]
+file = "opus/celt/modes.c"
+size = 16674
+sha256 = "03e61ddf326812e4d0d7c00067319af74e1cc5653e2c9551e5a322cad1f73480"
+
+[[pin.files]]
+file = "opus/celt/modes.h"
+size = 2665
+sha256 = "f1e503db4939cefaaaf9b5c744023223de0acdb51d2e33238e60bb0495e81c3f"
+
+[[pin.files]]
+file = "opus/celt/os_support.h"
+size = 3291
+sha256 = "9e0b4572b0c5f366fd6f954d8f70d598d5f2b9d6cd7d123fc0f57cfff54abfd6"
+
+[[pin.files]]
+file = "opus/celt/pitch.c"
+size = 15133
+sha256 = "ad93368ae01b6fcadd28905e6ed5a55ad165ae5031654540af77d1ffe55acfd5"
+
+[[pin.files]]
+file = "opus/celt/pitch.h"
+size = 6284
+sha256 = "546220cfc7b32796a1f18b37ce75864e94b0016ea8a5eaace1f06c70aa8e20e2"
+
+[[pin.files]]
+file = "opus/celt/quant_bands.c"
+size = 18965
+sha256 = "bec6e7ac19ff02b83480c6ca6a01c084566781856a1e3442b7468bf25a4b937b"
+
+[[pin.files]]
+file = "opus/celt/quant_bands.h"
+size = 2998
+sha256 = "ea86cddfd98268902f37662cbe67d168fb8c1d5d23ad6e6a82b8f6f511048874"
+
+[[pin.files]]
+file = "opus/celt/rate.c"
+size = 29415
+sha256 = "f288c8b88882e6500ee5fbb9036eef1ee572e0301d28cd686061c815747a7b9e"
+
+[[pin.files]]
+file = "opus/celt/rate.h"
+size = 3606
+sha256 = "7bc335949f2e6e7d4e28c23681c4fc6f3c99733848deb7d1a24e908431f0d8a6"
+
+[[pin.files]]
+file = "opus/celt/stack_alloc.h"
+size = 6798
+sha256 = "791a3ed2f579d0031213dd2e59446b2160f887c2df158f00b254bb08e66a739f"
+
+[[pin.files]]
+file = "opus/celt/static_modes_float.h"
+size = 149322
+sha256 = "c3cf8439cdcf9281a5a0a66eefd5f9d0c82537c6f88e33b53ace9c9b3880f60c"
+
+[[pin.files]]
+file = "opus/celt/vq.c"
+size = 25048
+sha256 = "7f488e7ced4080d267e4ff44cb512861a47a49d45891277f4e898fe680dad0e5"
+
+[[pin.files]]
+file = "opus/celt/vq.h"
+size = 3921
+sha256 = "b6c4c1ff9eb7aeb71cef86fe18d33446c9b9a71b4e82f002840d7f13028195f5"
+
+[[pin.files]]
+file = "opus/include/opus.h"
+size = 59505
+sha256 = "036f6a6e83a20e943505743e113e90d6278cbe8240f7d5bb90b3f86261e783e3"
+
+[[pin.files]]
+file = "opus/include/opus_custom.h"
+size = 16965
+sha256 = "3b67a36b36eac7d712f712a4e57d602a7ff9df753d184b0743bbca8628ccff4b"
+
+[[pin.files]]
+file = "opus/include/opus_defines.h"
+size = 38558
+sha256 = "bbd4d4e3ba99f6982b1c8d8f5541814ad77d8e8babf3cc788cf23d517b2ca9d6"
+
+[[pin.files]]
+file = "opus/include/opus_multistream.h"
+size = 38267
+sha256 = "fd99c4594b4b57e406e9cab45a777895dd1b4c8de067088aa54ed7ae100b13f0"
+
+[[pin.files]]
+file = "opus/include/opus_types.h"
+size = 5157
+sha256 = "19cb301ea1eedbcbdbb5049363de061893bf11c20e505a657b69ce6ffa5b11fa"
+
+[[pin.files]]
+file = "opus/silk/API.h"
+size = 8353
+sha256 = "00d2a2ff0d5228b2eeac4e1645531185537a07982cad2d2231cce287b8171acf"
+
+[[pin.files]]
+file = "opus/silk/CNG.c"
+size = 9920
+sha256 = "e3741a6e4f23f941c1dc4589a7254d5d21f12ae01002376ec36270992daa8b52"
+
+[[pin.files]]
+file = "opus/silk/Inlines.h"
+size = 7244
+sha256 = "295558194c3b1778d5ced3b409ffcc011f0e5df3e25e2bcb8be28ef649ae9881"
+
+[[pin.files]]
+file = "opus/silk/LPC_analysis_filter.c"
+size = 5015
+sha256 = "5cd8edb8558515d477f7c65c4f597d15c68d65b6d90cc303965d317666821c23"
+
+[[pin.files]]
+file = "opus/silk/LPC_fit.c"
+size = 4042
+sha256 = "27e0d8a40024c0d6532705792c7278a3ca280e408da71993efeb485fd8f03ea6"
+
+[[pin.files]]
+file = "opus/silk/LPC_inv_pred_gain.c"
+size = 6161
+sha256 = "c2cc22922cd31554eaa8920ac31238a901139b9cb7964621f6f5f49bedd2b720"
+
+[[pin.files]]
+file = "opus/silk/MacroCount.h"
+size = 20763
+sha256 = "8d822f074a31b6edf49c1a9b45f6cab36d5193393aef94b73c6ff3c4d64ac4fc"
+
+[[pin.files]]
+file = "opus/silk/MacroDebug.h"
+size = 33581
+sha256 = "aefab84ea6848a81b1c48bbcf60935f70751ded68853d5c7d0ebb1249bd75773"
+
+[[pin.files]]
+file = "opus/silk/NLSF2A.c"
+size = 6361
+sha256 = "ce17793880db88d7247596f30415f86ceda690e2ea289a6eff27f2665bc8633c"
+
+[[pin.files]]
+file = "opus/silk/NLSF_decode.c"
+size = 4766
+sha256 = "3d723c92896df39bf399e7758b119d641261048f5e199935e61cab287cf8b8e1"
+
+[[pin.files]]
+file = "opus/silk/NLSF_stabilize.c"
+size = 6347
+sha256 = "14c69720cd90614d8fdf1a0bb05a051598b00783370633323bafec8ff310e2ac"
+
+[[pin.files]]
+file = "opus/silk/NLSF_unpack.c"
+size = 2948
+sha256 = "049555e005febe8cedd19e72886f108835e4883e69013bf95050984de070faac"
+
+[[pin.files]]
+file = "opus/silk/PLC.c"
+size = 21986
+sha256 = "914eb9ce1f7bd3cf68cbe5f8e91f5411c872006a99a6665409e66f307af01427"
+
+[[pin.files]]
+file = "opus/silk/PLC.h"
+size = 3339
+sha256 = "013f9159a95bf705df435a11cbe0b1ec39d207db8bac9a7180585657f130db32"
+
+[[pin.files]]
+file = "opus/silk/SigProc_FIX.h"
+size = 39392
+sha256 = "37942e211d5ba6443a8da5841f374023f5bba4899d25134fe2dca62c4cac5cf9"
+
+[[pin.files]]
+file = "opus/silk/bwexpander.c"
+size = 2760
+sha256 = "f01c2e6752d806974054c5b0ac5b9fbe1fef88b59873dcaae87974521f2d0256"
+
+[[pin.files]]
+file = "opus/silk/bwexpander_32.c"
+size = 2574
+sha256 = "695726d8e425b68ecd9e2af47fef31246066c01303f6d37dffba709462584474"
+
+[[pin.files]]
+file = "opus/silk/code_signs.c"
+size = 5554
+sha256 = "becd3134a77e972d70e2845cf10ac4a597233040c37d58338ffe9085859660a2"
+
+[[pin.files]]
+file = "opus/silk/control.h"
+size = 6661
+sha256 = "a9fc44c0719b6c3506695b2667d53f0093877fabb251bfac57edd2fb5e08a784"
+
+[[pin.files]]
+file = "opus/silk/debug.h"
+size = 12924
+sha256 = "6f02588379145c4ddcbd01dfaf8bb55d06b1f477120d7eb24e389ec57004388d"
+
+[[pin.files]]
+file = "opus/silk/dec_API.c"
+size = 22827
+sha256 = "0f94c4c985851051d3cdf40a2ebf9b96c616ee1f49b8a2ad4477a6880ff01d1b"
+
+[[pin.files]]
+file = "opus/silk/decode_core.c"
+size = 12216
+sha256 = "9bec65a48d32f0b4843eaaa02cd6b49b0e853186f47695ce3f3c178d4bd3452f"
+
+[[pin.files]]
+file = "opus/silk/decode_frame.c"
+size = 7388
+sha256 = "d76755eb49d7e2ee5106945948c4613d6fbaceeec90d41f5ddc51956e185716d"
+
+[[pin.files]]
+file = "opus/silk/decode_indices.c"
+size = 7245
+sha256 = "4d872038c93a2e16c266b1d29f400ffa8f5a4ccf57e50cbdc4cc5fa17623f5f5"
+
+[[pin.files]]
+file = "opus/silk/decode_parameters.c"
+size = 5527
+sha256 = "d86e43fd07b72472baa5036bacb277600312afc0153d243324b89d8699c8df1b"
+
+[[pin.files]]
+file = "opus/silk/decode_pitch.c"
+size = 3717
+sha256 = "b74b8c46973519c2a1ee535ce2f64ac89a93a3c4c0ec2de997d56cc5ca9262fa"
+
+[[pin.files]]
+file = "opus/silk/decode_pulses.c"
+size = 5598
+sha256 = "58560300a5a4ae0ee2291349a8667cce5ebb9054c4e5056aeed76e0fe2792f10"
+
+[[pin.files]]
+file = "opus/silk/decoder_set_fs.c"
+size = 4967
+sha256 = "8cdd79180cf730d77c6e063b625b960c6199e9f75c98101ae5cd16be4dc1e008"
+
+[[pin.files]]
+file = "opus/silk/define.h"
+size = 9941
+sha256 = "4c580873f3eaa1f9ecebeb2cf890e3bc6d24937673a0fd3e5da8eb1ea46843b1"
+
+[[pin.files]]
+file = "opus/silk/errors.h"
+size = 3572
+sha256 = "899a34237a1f21867731382a94cca0c341dd9dad1bf964e74acb3f7bfb542271"
+
+[[pin.files]]
+file = "opus/silk/gain_quant.c"
+size = 6928
+sha256 = "070223b7a20976d91c8f557c5552537db2c452e459483d886f78daf71c5d17b7"
+
+[[pin.files]]
+file = "opus/silk/init_decoder.c"
+size = 3057
+sha256 = "67d4da1fa2a546432ba3ce7f815cab5f759c24daff9c11746217e1aca4b0feb0"
+
+[[pin.files]]
+file = "opus/silk/lin2log.c"
+size = 2219
+sha256 = "75a642c6d99bfe79e2ddc924e9b96bdf3e0ef7359cfa2e28df4606ad4f86750f"
+
+[[pin.files]]
+file = "opus/silk/log2lin.c"
+size = 2636
+sha256 = "4ce500b6b3ae8f96a6cce5b93391e85459ec88e640cd8430a32ce7337fed8923"
+
+[[pin.files]]
+file = "opus/silk/macros.h"
+size = 6501
+sha256 = "7fb2ce02a79df147f9220a4fbc1effe531305881092f4b7d003057666223ebfd"
+
+[[pin.files]]
+file = "opus/silk/main.h"
+size = 33034
+sha256 = "5ea6800f56e83fc6f15f7b7c8b189c4686a1f81b1cc75e18f580e305d5f455f2"
+
+[[pin.files]]
+file = "opus/silk/pitch_est_defines.h"
+size = 4060
+sha256 = "a51197e9131a105cb12547ac520320a5ad9633c9a89dd74848999ca748f18af4"
+
+[[pin.files]]
+file = "opus/silk/pitch_est_tables.c"
+size = 3589
+sha256 = "c0cf34e7d5ced41d7117c345edddc4ecefaf80ef2a55950a3a95582da7e3e334"
+
+[[pin.files]]
+file = "opus/silk/resampler.c"
+size = 10146
+sha256 = "b75329b716a429b50e937bf7975aedd200543d8a7e4e1c77a4572b2975740ba3"
+
+[[pin.files]]
+file = "opus/silk/resampler_private.h"
+size = 4485
+sha256 = "b8985c3e4b2d1a7db5ef0585d57bbe5106804d5c04648ab7a400c2d89f589e67"
+
+[[pin.files]]
+file = "opus/silk/resampler_private_AR2.c"
+size = 2664
+sha256 = "ae6142c28e724374e0a0f8e988e27ead22c6d52fb4e0ede4467cac3d500b2f2c"
+
+[[pin.files]]
+file = "opus/silk/resampler_private_IIR_FIR.c"
+size = 5231
+sha256 = "584c7b2afbcb56ba03016401408d8eecb1393640eee947d0bae78fc141f425be"
+
+[[pin.files]]
+file = "opus/silk/resampler_private_down_FIR.c"
+size = 10897
+sha256 = "175b7b6863fecff32d9e36e497bbc666e7083ceb35dcca7d40502de58eb4fabd"
+
+[[pin.files]]
+file = "opus/silk/resampler_private_up2_HQ.c"
+size = 5367
+sha256 = "f06a982b8856e1575371d147ddb9a03033f0569e8d7f969536133e606ef32a36"
+
+[[pin.files]]
+file = "opus/silk/resampler_rom.c"
+size = 4747
+sha256 = "ec3ba5c620ee504d0a902290ae54bc8b434754e57e294a501a82757b9c9d6ddd"
+
+[[pin.files]]
+file = "opus/silk/resampler_rom.h"
+size = 3224
+sha256 = "68bfa7fc24650e0af574ee853764e40849952eb58e84e26739d0ac2cedf49942"
+
+[[pin.files]]
+file = "opus/silk/resampler_structs.h"
+size = 2546
+sha256 = "0f82b16200ce0d9afdb81c670b44d7435dc79efa8e2a37e7b529efd565f2b84d"
+
+[[pin.files]]
+file = "opus/silk/shell_coder.c"
+size = 7718
+sha256 = "60b5a2786238f669eb48dc9a81c072707a11691be3a73029ceb643a6dee5d7dd"
+
+[[pin.files]]
+file = "opus/silk/sort.c"
+size = 6265
+sha256 = "adf6ce2c63bd04e092e43bece82fb52cd6dc281d2b6bbfdd24f95fd54c27fef1"
+
+[[pin.files]]
+file = "opus/silk/stereo_MS_to_LR.c"
+size = 4899
+sha256 = "55298e28fe9248ac067273533140ae73220b4f220222974b1e79accedea9a61a"
+
+[[pin.files]]
+file = "opus/silk/stereo_decode_pred.c"
+size = 3417
+sha256 = "b852fbd96ea37d0387b523e5aec0526e0afe5d64457c5da44e6d6903cca27e8b"
+
+[[pin.files]]
+file = "opus/silk/structs.h"
+size = 21801
+sha256 = "255e5bfce33917a4c5e379a5371f939e7d34b1eb131a398c65a38a438c3ad2d8"
+
+[[pin.files]]
+file = "opus/silk/sum_sqr_shift.c"
+size = 3789
+sha256 = "0a9db7e0b0b5f577ffdc277a03a043dbeac3d3dc9d05abcbc798169c3abfc44f"
+
+[[pin.files]]
+file = "opus/silk/table_LSF_cos.c"
+size = 4191
+sha256 = "9cae32dfdc4ab45e5f288a4fd74cf8bb5dace19c651ec54b6c064024434d52c2"
+
+[[pin.files]]
+file = "opus/silk/tables.h"
+size = 7110
+sha256 = "2155bc78731ed37a76106d1f48d5c1125bd9cf579e9da9edb73c07c370bb3942"
+
+[[pin.files]]
+file = "opus/silk/tables_LTP.c"
+size = 7432
+sha256 = "95b4912701d4dfd46f0364603092885818c00604808c9b7f606e40eec34fb3f0"
+
+[[pin.files]]
+file = "opus/silk/tables_NLSF_CB_NB_MB.c"
+size = 10785
+sha256 = "94e49118901f9f9e4f09c9c088f6eeb8936f200686517d791440c26c523463f5"
+
+[[pin.files]]
+file = "opus/silk/tables_NLSF_CB_WB.c"
+size = 14498
+sha256 = "58511404ed6a4f6a8f5b0051e9328df1b60a8c6d59928382438be2cddabc05d8"
+
+[[pin.files]]
+file = "opus/silk/tables_gain.c"
+size = 2451
+sha256 = "79b3ca1d67ff4dc665a837a9c6f22063fa706486846df77ae48376f02d1a6914"
+
+[[pin.files]]
+file = "opus/silk/tables_other.c"
+size = 4714
+sha256 = "07b309e991adab0496fe0a0622195c9b8c11c17290582fd39fe0b357ef7afa5d"
+
+[[pin.files]]
+file = "opus/silk/tables_pitch_lag.c"
+size = 3066
+sha256 = "0cb26e4e711a16a728aeb3943bf9c23a488de6abd2fe455076f418e325605c4c"
+
+[[pin.files]]
+file = "opus/silk/tables_pulses_per_block.c"
+size = 11423
+sha256 = "2fb238cd37048303f2dfa033b1e4c4d6decc427ba81c8eccacae5e19dc7b77fd"
+
+[[pin.files]]
+file = "opus/silk/typedef.h"
+size = 3522
+sha256 = "a25409c0741545a75f28bf8a51ccdc3a7ba2421e783bd02baafe379e6d43e5b7"
+
+[[pin.files]]
+file = "opus/src/extensions.c"
+size = 23462
+sha256 = "82a896f6067d32cbb489b694f2e90f2dec8208f0a68ca40e1d123e312a1408b5"
+
+[[pin.files]]
+file = "opus/src/opus.c"
+size = 11274
+sha256 = "1cee175636295bbd576ff384b77c31663b04fe09619598a452e067229205ade1"
+
+[[pin.files]]
+file = "opus/src/opus_decoder.c"
+size = 49619
+sha256 = "ddc60846096a83669aa33992481ce088eca791d6478ecdbf1e445a59d678779a"
+
+[[pin.files]]
+file = "opus/src/opus_multistream.c"
+size = 2683
+sha256 = "8dfa4d943290cbe8161c518ff7ed0440c9645fd38c76d1579bca72deef99340a"
+
+[[pin.files]]
+file = "opus/src/opus_multistream_decoder.c"
+size = 15178
+sha256 = "833ee4f41937bf9fcbe6c88a90a2b75a9d9fddba2981825e202e74e71d6ec581"
+
+[[pin.files]]
+file = "opus/src/opus_private.h"
+size = 9225
+sha256 = "546ef810679530ec9e1129ca72e6fba29c4eba30ed56737b544525cea58feec8"
+
+[[license]]
+file = "LICENSES/dr_libs-LICENSE.txt"
+url = "https://raw.githubusercontent.com/mackron/dr_libs/806ee9ada8ca9827b22f76827f739c290f37ba48/LICENSE"
+blob = "16dfbdfda2b761d1ec2ed57266dbdc777349ad25"
+sha256 = "dd1c647e6f767f8ff4b2dfae0fed314726600a01e0cf1ef556afddd5fa96ff15"
+
+[[license]]
+file = "LICENSES/stb-LICENSE.txt"
+url = "https://raw.githubusercontent.com/nothings/stb/1ee679ca2ef753a528db5ba6801e1067b40481b8/LICENSE"
+blob = "a77ae91f3ec0abb0028c9d9bd8d34d880b454d38"
+sha256 = "bebfe904b14301657e4e5d655c811d51fd31b97c455b9cc2d8600d6bac6cff63"
